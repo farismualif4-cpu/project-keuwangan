@@ -1,0 +1,93 @@
+// Prisma schema file untuk FinTrack
+// Dokumentasi: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// Model Pengguna FinTrack
+model User {
+  id           String        @id @default(uuid())
+  name         String
+  email        String        @unique
+  passwordHash String
+  transactions Transaction[]
+  wallets      Wallet[]
+  budgets      Budget[]
+  categories   Category[]
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+
+  @@map("users")
+}
+
+// Model Kategori Transaksi (Sistem & Kustom Pengguna)
+model Category {
+  id        String   @id @default(uuid())
+  name      String   // Nama kategori (misal: "Makanan & Minuman", "Gaji Pokok")
+  type      String   // "income" atau "expense"
+  color     String   @default("#64748b") // Warna tag visual hex
+  icon      String   @default("MoreHorizontal") // Ikon Lucide
+  isSystem  Boolean  @default(false) // True jika kategori bawaan sistem, False jika kustom pengguna
+  userId    String?  // Null jika kategori sistem, terisi jika kategori kustom
+  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, name, type])
+  @@map("categories")
+}
+
+// Model Dompet / Sumber Rekening
+model Wallet {
+  id             String   @id @default(uuid())
+  name           String   // Nama dompet (misal: "Bank BCA", "Dompet Tunai")
+  type           String   @default("Bank") // "Bank", "Cash", "e-Wallet", "Investasi"
+  initialBalance Float    @default(0) // Saldo awal pembukaan akun
+  color          String   @default("#6366f1") // Warna tag antarmuka
+  icon           String   @default("Wallet") // Nama icon Lucide
+  userId         String   // Pemilik dompet
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@map("wallets")
+}
+
+// Model Alokasi Anggaran Bulanan
+model Budget {
+  id         String   @id @default(uuid())
+  categoryId String   // ID Kategori (misal: "food", "transport", "shopping")
+  amount     Float    // Plafon / batas limit pengeluaran
+  period     String   @default("monthly") // Periode alokasi ("monthly")
+  userId     String   // Pemilik anggaran
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@unique([userId, categoryId, period])
+  @@map("budgets")
+}
+
+// Model Transaksi Keuangan
+model Transaction {
+  id          String   @id @default(uuid())
+  title       String
+  amount      Float
+  type        String   // "income" atau "expense"
+  category    String   // id kategori (misal: "salary", "food", "transport")
+  wallet      String   @default("cash") // id dompet/sumber dana ("bca", "mandiri", "cash", "gopay")
+  date        DateTime @default(now())  // tanggal transaksi
+  description String?  // catatan/deskripsi tambahan (opsional)
+  userId      String?  // Relasi ke User (nullable untuk menjaga data lama tidak terhapus)
+  user        User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("transactions")
+}
