@@ -565,6 +565,7 @@ body {
 .stat-card.card-income::after { background: linear-gradient(90deg, #10b981, #34d399); }
 .stat-card.card-expense::after { background: linear-gradient(90deg, #f43f5e, #fb7185); }
 .stat-card.card-savings::after { background: linear-gradient(90deg, #f59e0b, #fbbf24); }
+.stat-card.card-budget::after { background: linear-gradient(90deg, #8b5cf6, #06b6d4); }
 
 .stat-card:hover {
   transform: translateY(-2px);
@@ -1953,4 +1954,176 @@ body {
   color: var(--text-muted);
   border-radius: 4px;
   font-weight: 600;
+}
+
+/* ==========================================================================
+   TAHAP 6: EXPORT & IMPORT DATA STYLES
+   ========================================================================== */
+
+.backup-card-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.backup-option-card {
+  padding: 18px;
+  background: var(--bg-card);
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-xs);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.backup-option-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.backup-option-title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-main);
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.backup-option-desc {
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-top: 2px;
+  line-height: 1.4;
+}
+
+.csv-filter-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 10px;
+  padding: 12px;
+  background: var(--bg-app);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-light);
+}
+
+.csv-filter-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.csv-filter-label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.csv-filter-input,
+.csv-filter-select {
+  font-size: 13px;
+  padding: 6px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-light);
+  background: var(--bg-card);
+  color: var(--text-main);
+  outline: none;
+  width: 100%;
+}
+
+.csv-filter-input:focus,
+.csv-filter-select:focus {
+  border-color: var(--primary);
+}
+
+.import-preview-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 10px;
+  margin: 16px 0;
+}
+
+.import-preview-card {
+  padding: 12px;
+  background: var(--bg-app);
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-light);
+  text-align: center;
+}
+
+.import-preview-val {
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--primary);
+  display: block;
+}
+
+.import-preview-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.import-mode-selection {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 16px 0;
+}
+
+.import-mode-option {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-light);
+  background: var(--bg-app);
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.import-mode-option.active {
+  border-color: var(--primary);
+  background: var(--primary-light);
+}
+
+.import-mode-option.danger-active {
+  border-color: var(--danger);
+  background: var(--danger-light);
+}
+
+.import-mode-radio-input {
+  margin-top: 3px;
+  cursor: pointer;
+}
+
+.import-warning-box {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px;
+  border-radius: var(--radius-sm);
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+  color: #92400e;
+  font-size: 13px;
+  line-height: 1.4;
+  margin: 12px 0;
+}
+
+.import-confirm-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-main);
+  cursor: pointer;
+  margin-top: 10px;
 }

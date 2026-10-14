@@ -1,496 +1,291 @@
-# FinTrack — Backend Progress Report: Tahap 4 (Kategori Dinamis, Filter Transaksi, dan Paginasi)
+# FinTrack — Backend Progress Report: Tahap 7 (Dashboard & Analitik Keuangan)
 
-*Tanggal Pelaksanaan*: 11 Oktober 2026  
-*Status Pengerjaan*: **Selesai dan Diuji Penuh**  
-*Hasil Pengujian*:
-- **Test Suite Tahap 4 (`test-tahap4.js`)**: 45 dari 45 assertion LULUS (100%)
-- **Regresi Dompet & Anggaran (`test-wallets-budgets.js`)**: 32 dari 32 assertion LULUS (100%)
-- **Regresi Autentikasi & Keamanan Data (`test-auth.js`)**: 27 dari 27 assertion LULUS (100%)
-- **Regresi API Transaksi Dasar (`test-api.js`)**: 20 dari 20 assertion LULUS (100%)
-- **Total Pengujian Otomatis**: **124 assertion LULUS (0 Gagal)**
-- **Persistensi Data Setelah Server Restart**: Teruji dan Terverifikasi
-- **Build Frontend (`npm.cmd run build`)**: Berhasil tanpa error (`built in 728ms`)
-
----
-
-## 1. Ringkasan Perubahan Tahap 4
-
-Pada **Tahap 4**, fokus pengembangan mencakup penambahan kategori dinamis ke dalam database, filter transaksi canggih, paginasi di tingkat database, integrasi antarmuka frontend, serta audit komprehensif rencana migrasi autentikasi ke cookie `HttpOnly`.
-
-Poin-poin perubahan yang telah diimplementasikan:
-1. **Model Database Kategori Dinamis (`Category`)**:
-   - Skema Prisma diperluas dengan model `Category` yang memiliki atribut: `id`, `name`, `type` (`income` | `expense`), `color`, `icon`, `isSystem` (Boolean), `userId`, `createdAt`, dan `updatedAt`.
-   - Menggunakan indeks unik majemuk `@@unique([userId, name, type])` untuk mencegah duplikasi nama kategori dengan tipe yang sama bagi pengguna yang sama.
-   - Merancang relasi opsional dengan `User` sehingga kategori sistem dapat berdiri secara global (`userId: null`), sedangkan kategori kustom terikat erat dengan pemilik akun (`userId: user.id`).
-2. **Penyemaian (*Seeding*) Kategori Sistem Bawaan**:
-   - Dibuat modul [`backend/src/config/seedCategories.js`](file:///d:/month-4/project-keuwangan/backend/src/config/seedCategories.js) yang mengeksekusi 13 kategori sistem bawaan (8 pengeluaran dan 5 pemasukan) menggunakan ID kanonik yang konsisten (`food`, `transport`, `shopping`, `bills`, `entertainment`, `health`, `education`, `others_exp`, `salary`, `freelance`, `investment`, `bonus`, `others_inc`).
-   - Pendekatan ID kanonik ini menjamin **100% kompatibilitas mundur** dengan transaksi dan anggaran lama tanpa risiko *foreign key mismatch* atau data rusak.
-3. **Endpoint REST API Kategori (`/api/categories`)**:
-   - `GET /api/categories`: Mengambil kategori sistem ditambah kategori kustom milik pengguna yang sedang login (`OR: [{ isSystem: true }, { userId: req.user.id }]`). Mendukung query filter `?type=income` atau `?type=expense`.
-   - `GET /api/categories/:id`: Mengambil detail satu kategori milik pengguna atau kategori sistem.
-   - `POST /api/categories`: Membuat kategori kustom baru dengan validasi ketat (nama minimal 2 karakter, tipe wajib `income` atau `expense`).
-   - `PUT /api/categories/:id`: Memperbarui kategori kustom milik pengguna. Permintaan edit kategori sistem ditolak dengan HTTP 403 Forbidden.
-   - `DELETE /api/categories/:id`: Menghapus kategori kustom milik pengguna. Permintaan hapus kategori sistem ditolak dengan HTTP 403 Forbidden. Menghapus kategori yang masih digunakan oleh transaksi atau alokasi anggaran ditolak aman dengan HTTP 400 Bad Request.
-4. **Filter Transaksi dan Paginasi di Tingkat Database (`/api/transactions`)**:
-   - Endpoint `GET /api/transactions` diperluas dengan query parameters:
-     - `page`: Nomor halaman (angka bulat positif, minimal 1).
-     - `limit`: Jumlah data per halaman (angka bulat positif, otomatis dibatasi maksimal 100 untuk mencegah *denial of service* query).
-     - `type`: Filter tipe (`income` atau `expense`).
-     - `category`: Filter kategori ID.
-     - `wallet`: Filter dompet ID.
-     - `startDate` & `endDate`: Filter rentang tanggal transaksi dengan batas waktu penuh (00:00:00.000 hingga 23:59:59.999). Dilengkapi validasi format dan validasi logika rentang (`startDate > endDate` ditolak dengan HTTP 400).
-     - `search`: Pencarian teks pada judul atau catatan transaksi (*case-insensitive*).
-   - Pengurutan default konsisten: Tanggal terbaru terlebih dahulu (`date: 'desc'`), kemudian `createdAt: 'desc'`.
-   - Respons API mengembalikan metadata paginasi terstruktur: `{ page, limit, total, totalPages }` dengan tetap menjaga *field* `data` berupa array transaksi guna mempertahankan kompatibilitas kontrak API lama.
-5. **Validasi Kategori pada Mutasi Transaksi**:
-   - Pada saat membuat (`POST`) atau memperbarui (`PUT`) transaksi, ID kategori divalidasi ke database. Jika kategori tidak ditemukan atau milik pengguna lain, sistem menolak dengan HTTP 400 Bad Request.
-6. **Integrasi Antarmuka Frontend (`fintrack`)**:
-   - [`fintrack/src/services/api.js`](file:///d:/month-4/project-keuwangan/fintrack/src/services/api.js): Ditambahkan fungsi `getCategoriesApi`, `getCategoryByIdApi`, `createCategoryApi`, `updateCategoryApi`, `deleteCategoryApi`, dan diperluas `getTransactionsApi` untuk menyertakan seluruh parameter filter dan paginasi.
-   - [`fintrack/src/context/FinanceContext.jsx`](file:///d:/month-4/project-keuwangan/fintrack/src/context/FinanceContext.jsx): Menyediakan state kategori dinamis dari database, fungsi mutasi kategori (`addCategory`, `updateCategory`, `deleteCategory`), pemanggilan query transaksi berfilter via `fetchFilteredTransactions`, serta pembaruan perhitungan metrik finansial agar **seluruh transaksi pengguna tetap dihitung secara utuh** dan tidak terpotong oleh halaman paginasi aktif.
-   - [`fintrack/src/pages/TransactionsPage.jsx`](file:///d:/month-4/project-keuwangan/fintrack/src/pages/TransactionsPage.jsx): Dilengkapi bilah filter canggih (pencarian, tombol tipe transaksi, filter dropdown kategori & dompet, pemilih rentang tanggal, tombol reset filter), modal Kelola Kategori Dinamis, serta navigasi paginasi (Sebelumnya, Nomor Halaman Aktif, Berikutnya, dan pengatur limit per halaman).
-   - [`fintrack/src/index.css`](file:///d:/month-4/project-keuwangan/fintrack/src/index.css): Ditambahkan styling profesional untuk kontrol filter canggih, navigasi paginasi, tombol halaman aktif, serta modal kelola kategori.
+*Tanggal Pelaksanaan*: 13 Oktober 2026  
+*Status Pengerjaan*: **Selesai dan Diuji Penuh (100% Assertion Lulus)**  
+*Hasil Pengujian Aktual*:
+- **Test Suite Tahap 7 (`test-tahap7.js`)**: 55 dari 55 assertion LULUS (100%)
+- **Regresi Tahap 6 Ekspor & Impor Data (`test-tahap6.js`)**: 53 dari 53 assertion LULUS (100%)
+- **Regresi Tahap 5 Sesi & HttpOnly (`test-tahap5.js`)**: 36 dari 36 assertion LULUS (100%)
+- **Regresi Tahap 4 Kategori & Filter (`test-tahap4.js`)**: 45 dari 45 assertion LULUS (100%)
+- **Regresi Tahap 3 Dompet & Anggaran (`test-wallets-budgets.js`)**: 32 dari 32 assertion LULUS (100%)
+- **Regresi Tahap 2 Autentikasi & Keamanan Data (`test-auth.js`)**: 27 dari 27 assertion LULUS (100%)
+- **Regresi Tahap 1 API Transaksi Dasar (`test-api.js`)**: 20 dari 20 assertion LULUS (100%)
+- **Total Pengujian Otomatis Keseluruhan**: **268 assertion LULUS (0 Gagal)**
+- **Build Frontend (`npm.cmd run build`)**: Berhasil tanpa error (`built in 1.37s`, 0 warning sintaks)
 
 ---
 
-## 2. Struktur Folder Terkini
+## 1. Investigasi & Akar Penyebab Masalah Halaman Putih (Bagian A)
 
-```text
-project-keuwangan/
-├── BACKEND_PROGRESS.md                  # Laporan progres root proyek (File ini)
-├── FINTRACK_AUDIT.md                    # Laporan audit arsitektur menyeluruh
-├── backend/                             # Backend Node.js + Express + Prisma + SQLite
-│   ├── .env                             # Konfigurasi lokal aktif (PORT, DB, JWT_SECRET, JWT_EXPIRES_IN)
-│   ├── .env.example                     # Contoh template konfigurasi environment
-│   ├── .gitignore                       # Menolak node_modules, .env, *.db, *.db.backup*
-│   ├── package.json                     # Dependensi: express, cors, dotenv, @prisma/client, bcryptjs, jsonwebtoken
-│   ├── server.js                        # Server Express dengan seeder kategori sistem otomatis
-│   ├── test-api.js                      # Skrip uji regresi CRUD transaksi dasar (20 assertions)
-│   ├── test-auth.js                     # Skrip uji regresi autentikasi & isolasi multi-tenant (27 assertions)
-│   ├── test-wallets-budgets.js          # Skrip uji regresi dompet & anggaran (32 assertions)
-│   ├── test-tahap4.js                   # Skrip uji komprehensif Tahap 4 (45 assertions)
-│   ├── prisma/
-│   │   ├── dev.db                       # Database SQLite aktif (14 users, 16 transactions, 4 wallets, 4 budgets, 13 categories)
-│   │   ├── dev.db.backup_tahap3         # Cadangan fisik database Tahap 3
-│   │   ├── dev.db.backup_tahap4         # Cadangan fisik database sebelum migrasi Tahap 4
-│   │   ├── schema.prisma                # Skema data model User, Transaction, Wallet, Budget, Category
-│   │   └── migrations/
-│   │       ├── 20261010184431_init/
-│   │       ├── 20261010185950_add_user_model/
-│   │       └── 20261010192145_add_wallets_and_budgets/
-│   │       └── 20261010194023_add_categories_model/ # Migrasi DDL tabel categories & relasi User
-│   └── src/
-│       ├── config/
-│       │   ├── prisma.js                # Singleton PrismaClient instance
-│       │   └── seedCategories.js        # Logika seeder 13 kategori sistem bawaan
-│       ├── controllers/
-│       │   ├── authController.js        # Controller auth dengan fail-safe secret check
-│       │   ├── transactionController.js # CRUD transaksi dengan filter database, paginasi & validasi kategori
-│       │   ├── walletController.js      # CRUD dompet dengan kalkulasi saldo mutasi
-│       │   ├── budgetController.js      # CRUD anggaran dengan spent tracker per kategori
-│       │   └── categoryController.js    # CRUD kategori dinamis dengan proteksi sistem & referensi data
-│       ├── middlewares/
-│       │   ├── authMiddleware.js        # JWT Bearer authentication guard
-│       │   └── errorHandler.js          # Global error & 404 handler
-│       └── routes/
-│           ├── authRoutes.js            # /api/auth rute
-│           ├── healthRoutes.js          # /api/health rute
-│           ├── transactionRoutes.js     # /api/transactions rute (Protected)
-│           ├── walletRoutes.js          # /api/wallets rute (Protected)
-│           ├── budgetRoutes.js          # /api/budgets rute (Protected)
-│           └── categoryRoutes.js        # /api/categories rute (Protected)
-└── fintrack/                            # Frontend React 19 + Vite
-    ├── index.html
-    ├── vite.config.js
-    ├── package.json
-    └── src/
-        ├── App.jsx                      # Root application dengan Auth Guard
-        ├── main.jsx                     # Entry point Vite React
-        ├── context/
-        │   └── FinanceContext.jsx       # State Auth, Transaksi, Dompet, Anggaran, dan Kategori Dinamis
-        ├── services/
-        │   └── api.js                   # Client REST API FinTrack
-        ├── pages/
-        │   ├── AuthPage.jsx             # Halaman Login & Registrasi
-        │   ├── Dashboard.jsx            # KPI finansial & ringkasan dompet
-        │   ├── TransactionsPage.jsx     # Bilah filter canggih, paginasi, dan kelola kategori
-        │   ├── ReportsPage.jsx          # Evaluasi arus kas & aturan 50/30/20
-        │   ├── BudgetPage.jsx           # Alokasi batas anggaran kategori tersinkronkan ke DB
-        │   └── SettingsPage.jsx         # Pengaturan akun
-        └── index.css                    # Design token dan styling komponen
-```
+Sebelum penambahan fitur Tahap 7, dilakukan audit menyeluruh pada `main.jsx`, `App.jsx`, `FinanceContext.jsx`, alur inisialisasi autentikasi, CORS, dan siklus render React:
+
+### Akar Masalah yang Ditemukan:
+1. **Temporal Dead Zone (TDZ) ReferenceError pada `logout`**:
+   - Di [`fintrack/src/context/FinanceContext.jsx`](file:///d:/month-4/project-keuwangan/fintrack/src/context/FinanceContext.jsx), hook `useEffect` mendaftarkan callback `setOnUnauthorized` pada baris 130 dengan array dependensi `[logout]`.
+   - Namun, deklarasi `const logout = useCallback(...)` baru ditulis di bawahnya (baris 144).
+   - Dalam spesifikasi ECMAScript / React 19, variabel yang dideklarasikan dengan `const` berada dalam *Temporal Dead Zone (TDZ)* sebelum inisialisasinya dieksekusi. Mengevaluasi `[logout]` saat eksekusi pertama komponen memicu runtime exception: `ReferenceError: Cannot access 'logout' before initialization`.
+2. **Import Fungsi Hilang (`deleteWalletApi`)**:
+   - Baris 482 di `FinanceContext.jsx` memanggil `deleteWalletApi(id, token)`, namun fungsi ini belum di-import dari `../services/api.js`. Jika dipanggil, memicu `ReferenceError: deleteWalletApi is not defined`.
+3. **Circular Infinite Re-render Loop pada `initAuth`**:
+   - Fungsi `logout` menyertakan `hasInitializedAuth.current = false`.
+   - Saat aplikasi pertama dibuka dan pengguna belum memiliki cookie sesi login, `initAuth` mendeteksi refresh gagal lalu memanggil `logout()`.
+   - Pemanggilan `logout()` mereset `hasInitializedAuth.current` kembali ke `false` dan mengubah state React.
+   - Re-render berikutnya memicu `initAuth` berjalan lagi, gagal lagi, memanggil `logout()`, dan berulang tanpa henti hingga memicu error React `Maximum update depth exceeded` yang membuat layar terkunci (freeze).
+4. **CORS Rejection saat Port Vite Berubah**:
+   - Konfigurasi `allowedOrigins` di [`backend/server.js`](file:///d:/month-4/project-keuwangan/backend/server.js) sebelumnya hanya mencantumkan port spesifik `5173`.
+   - Saat port 5173 terpakai oleh proses yatim (orphan process), Vite secara otomatis berpindah ke `5174`. Hal ini menyebabkan seluruh request browser ditolak oleh middleware CORS backend dengan status `403 Forbidden`, sehingga refresh token dan pengambilan data awal gagal total.
+5. **Proses Yatim (Orphan Node Process) Mengunci Port 5173**:
+   - Terdapat proses latar belakang lama (PID 19588) yang masih memegang binding socket port 5173.
+
+### Solusi yang Diterapkan:
+- Mendeklarasikan `const logout = useCallback(...)` **sebelum** seluruh hook `useEffect` yang mereferensikannya.
+- Mengimpor `deleteWalletApi` secara eksplisit dari `../services/api.js`.
+- Menghapus mutasi `hasInitializedAuth.current = false` di dalam `logout`, serta menangani kegagalan refresh awal pada `initAuth` secara tenang (`setToken(null)`, `setUser(null)`) tanpa memicu efek samping loop.
+- Memperluas matcher CORS di `backend/server.js` dengan regex `^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$` agar seluruh port development lokal diizinkan dengan aman bersama kredensial cookie.
+- Mematikan proses yatim PID 19588 dan mengikat Vite kembali ke port bersih `http://localhost:5173`.
 
 ---
 
-## 3. Perubahan Schema Database & Migrasi Prisma
+## 2. Ringkasan Fitur Tahap 7 (Dashboard & Analitik Keuangan)
 
-### Cadangan Database Sebelum Migrasi
-Sebelum melakukan migrasi skema, database disalin secara fisik ke:
-`backend/prisma/dev.db.backup_tahap4`  
-Hasil verifikasi integritas: Seluruh 14 akun pengguna, 16 transaksi, 4 dompet, dan 4 anggaran tersimpan utuh tanpa kehilangan atau perubahan data (*0 data loss*).
+Tahap 7 mengimplementasikan dashboard keuangan eksekutif modern, cerdas, dan responsif dengan integrasi penuh ke database backend:
 
-### Definisi Skema Prisma (`schema.prisma`)
-```prisma
-model User {
-  id           String        @id @default(uuid())
-  email        String        @unique
-  passwordHash String
-  name         String
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
-  transactions Transaction[]
-  wallets      Wallet[]
-  budgets      Budget[]
-  categories   Category[]    // Relasi ke kategori kustom
+1. **5 Kartu Ringkasan (Top KPI Cards)**:
+   - **Total Saldo Seluruh Dompet**: Menghitung likuiditas riil bersih *lifetime* dari seluruh dompet aktif pengguna (`initialBalance` + seluruh mutasi pemasukan - pengeluaran tanpa double counting).
+   - **Total Pemasukan (Periode Terpilih)**: Total akumulasi dana masuk pada periode waktu aktif disertai kuantitas transaksi.
+   - **Total Pengeluaran (Periode Terpilih)**: Total akumulasi beban keluar pada periode waktu aktif disertai kuantitas transaksi.
+   - **Selisih Pemasukan & Pengeluaran (Arus Kas Bersih / Net Cashflow)**: Selisih nominal surplus/defisit serta persentase *Savings Rate* dengan indikator warna dinamis.
+   - **Sisa Anggaran & Peringatan Terlampaui**: Menghitung sisa plafon anggaran belanja dan mendeteksi kategori yang melebihi batas dengan lencana peringatan interaktif (`⚠️ X Anggaran Terlampaui` vs `✅ Anggaran Aman`).
 
-  @@map("users")
-}
+2. **Filter Periode Waktu Fleksibel**:
+   - **Bulan Ini (`this_month`)**: Rentang otomatis dari tanggal 1 s/d hari terakhir bulan berjalan.
+   - **Bulan Sebelumnya (`last_month`)**: Rentang otomatis dari tanggal 1 s/d hari terakhir bulan lalu.
+   - **3 Bulan Terakhir (`last_3_months`)**: Rentang dari 2 bulan lalu s/d akhir bulan berjalan.
+   - **Rentang Khusus (`custom`)**: Pemilih tanggal kustom (`startDate` dan `endDate`) dengan validasi format ISO dan pencegahan tanggal terbalik (`startDate > endDate`).
+   - Lencana visual menampilkan teks rentang tanggal aktif dan tombol refresh analitik real-time.
 
-model Category {
-  id        String   @id @default(uuid())
-  name      String
-  type      String   // "income" atau "expense"
-  color     String?  // Kode warna HEX (opsional)
-  icon      String?  // Nama icon Lucide (opsional)
-  isSystem  Boolean  @default(false) // True jika kategori bawaan sistem
-  userId    String?  // Null jika kategori sistem, terisi jika kategori kustom
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  user      User?    @relation(fields: [userId], references: [id], onDelete: Cascade)
+3. **Grafik Visual Interaktif (Recharts)**:
+   - **Grafik Tren Arus Kas**: Area chart interaktif yang dapat di-toggle antara tampilan **Bulanan (6 Bulan Terakhir)** dan **Harian (Periode Terpilih)** dengan gradien warna modern dan tooltip komparasi.
+   - **Grafik Komposisi Pengeluaran (Donut Chart)**: Diagram donat alokasi beban per kategori dengan label total pengeluaran di bagian tengah dan lencana persentase akurat.
 
-  @@unique([userId, name, type])
-  @@map("categories")
-}
-```
+4. **Panel Analisis Kategori Pengeluaran Terbesar**:
+   - Daftar berperingkat kategori pengeluaran tertinggi dengan ikon, warna khusus, dan bilah progres persentase.
+   - Penanda eksplisit jika suatu kategori telah melampaui limit anggaran bulanan yang ditentukan.
+   - Penanganan *empty state* yang ramah jika belum ada pengeluaran pada periode terpilih.
 
-### Eksekusi Migrasi
-Migrasi dijalankan menggunakan:
-```bash
-npx prisma migrate dev --name add_categories_model
-```
-Dihasilkan direktori migrasi:
-`backend/prisma/migrations/20261010194023_add_categories_model/migration.sql`
+5. **Integritas Data, Anti-Mock, & Multi-Tenant Isolation**:
+   - Seluruh data bersumber murni dari REST API backend dan database SQLite/Prisma.
+   - Endpoint analitik `/api/analytics/summary` strictly memfilter `userId: req.user.id`. Data pengguna lain (User B) terisolasi 100% dan tidak pernah mencemari kalkulasi pengguna aktif (User A).
 
 ---
 
-## 4. Dokumentasi Kontrak REST API Tahap 4
+## 3. Berkas yang Dibuat dan Diubah
 
-### A. Endpoint Kategori (`/api/categories`)
-Semua endpoint kategori wajib menyertakan header:
-`Authorization: Bearer <jwt_token>`
+### Berkas Baru
+| Path Berkas | Deskripsi |
+|---|---|
+| [`backend/src/controllers/analyticsController.js`](file:///d:/month-4/project-keuwangan/backend/src/controllers/analyticsController.js) | Controller backend untuk agregasi ringkasan saldo, pemasukan, pengeluaran, analisis anggaran, kategori, tren bulanan & harian. |
+| [`backend/src/routes/analyticsRoutes.js`](file:///d:/month-4/project-keuwangan/backend/src/routes/analyticsRoutes.js) | Router Express yang memetakan rute `/api/analytics/*` di bawah proteksi `requireAuth`. |
+| [`backend/test-tahap7.js`](file:///d:/month-4/project-keuwangan/backend/test-tahap7.js) | Test suite otomatis Tahap 7 menguji 55 assertion mencakup agregasi, filter periode, tanggal kustom, empty data, dan isolasi multi-tenant. |
 
-| Method | Endpoint | Query / Body Params | Deskripsi & Proteksi | Status Sukses |
-|---|---|---|---|---|
-| `GET` | `/api/categories` | `?type=income` atau `?type=expense` | Mengambil seluruh kategori sistem ditambah kategori kustom milik pengguna aktif. | 200 OK |
-| `GET` | `/api/categories/:id` | - | Mengambil detail 1 kategori berdasarkan ID. Jika ID milik pengguna lain, menghasilkan 404 Not Found. | 200 OK |
-| `POST` | `/api/categories` | `{ name, type, color, icon }` | Membuat kategori kustom baru. Validasi: `name` minimal 2 karakter, `type` wajib `income` atau `expense`. Duplikasi nama ditolak (400). | 201 Created |
-| `PUT` | `/api/categories/:id` | `{ name, type, color, icon }` | Mengubah kategori kustom. Mengubah kategori sistem ditolak dengan 403 Forbidden. Mengubah milik user lain menghasilkan 404. | 200 OK |
-| `DELETE` | `/api/categories/:id` | - | Menghapus kategori kustom. Menghapus kategori sistem ditolak (403 Forbidden). Menghapus kategori yang digunakan transaksi/anggaran ditolak (400 Bad Request). | 200 OK |
+### Berkas yang Diubah
+| Path Berkas | Perubahan yang Dilakukan |
+|---|---|
+| [`backend/server.js`](file:///d:/month-4/project-keuwangan/backend/server.js) | Mendaftarkan `analyticsRoutes` pada `/api/analytics` dan memperluas allowed origins CORS untuk seluruh port dev lokal. |
+| [`backend/src/middlewares/authMiddleware.js`](file:///d:/month-4/project-keuwangan/backend/src/middlewares/authMiddleware.js) | Menambahkan alias `export const authenticateToken = requireAuth` untuk kompatibilitas import. |
+| [`fintrack/src/services/api.js`](file:///d:/month-4/project-keuwangan/fintrack/src/services/api.js) | Menambahkan fungsi klien `getAnalyticsSummaryApi(params, token)`. |
+| [`fintrack/src/context/FinanceContext.jsx`](file:///d:/month-4/project-keuwangan/fintrack/src/context/FinanceContext.jsx) | Memperbaiki TDZ ReferenceError, menambahkan `deleteWalletApi`, menghapus circular auth loop, serta mengintegrasikan filter periode dan metrik analitik. |
+| [`fintrack/src/pages/Dashboard.jsx`](file:///d:/month-4/project-keuwangan/fintrack/src/pages/Dashboard.jsx) | Mengimplementasikan filter periode toolbar, 5 kartu ringkasan KPI, analisis kategori dengan bilah progres, dan integrasi data real-time. |
+| [`fintrack/src/components/CashflowChart.jsx`](file:///d:/month-4/project-keuwangan/fintrack/src/components/CashflowChart.jsx) | Menambahkan toggle mode tampilan Bulanan vs Harian, tooltip Rupiah komprehensif, dan empty state. |
+| [`fintrack/src/components/ExpensePieChart.jsx`](file:///d:/month-4/project-keuwangan/fintrack/src/components/ExpensePieChart.jsx) | Menambahkan label nominal total di bagian tengah donat, lencana persentase, dan deteksi peringatan anggaran terlampaui. |
+| [`fintrack/src/index.css`](file:///d:/month-4/project-keuwangan/fintrack/src/index.css) | Menambahkan styling kartu anggaran `.stat-card.card-budget`, bilah filter, dan grid responsif. |
 
-### B. Endpoint Transaksi yang Diperluas (`/api/transactions`)
-Query parameter yang didukung:
-- `page` (default: 1): Nomor halaman yang diminta.
-- `limit` (default: 10, max: 100): Jumlah data per halaman.
-- `type`: `income` atau `expense`.
-- `category`: ID kategori.
-- `wallet`: ID dompet.
-- `startDate` & `endDate`: Rentang tanggal (format `YYYY-MM-DD`).
-- `search`: Kata kunci pencarian judul atau deskripsi.
+---
 
-Contoh Respons:
+## 4. Spesifikasi Endpoint REST API Baru (`/api/analytics`)
+
+Endpoint ini mewajibkan Bearer Token pengguna terautentikasi:
+`Authorization: Bearer <access_token>`
+
+### `GET /api/analytics/summary`
+Mengambil ringkasan analitik komprehensif, metrik periode, rincian kategori, dan tren grafik.
+
+**Query Parameters (Opsional)**:
+- `period`: `this_month` (default) | `last_month` | `last_3_months` | `custom` | `all`
+- `startDate`: Format `YYYY-MM-DD` (wajib diisi jika `period=custom`)
+- `endDate`: Format `YYYY-MM-DD` (wajib diisi jika `period=custom`)
+
+**Contoh Response Sukses (Status 200 OK)**:
 ```json
 {
   "success": true,
-  "message": "Berhasil mengambil daftar transaksi pengguna",
-  "count": 3,
-  "pagination": {
-    "page": 1,
-    "limit": 3,
-    "total": 8,
-    "totalPages": 3
-  },
-  "data": [
-    {
-      "id": "0b831d40-a488-481b-a24d-e5135df518ce",
-      "title": "Tagihan Listrik PLN",
-      "amount": 450000,
-      "type": "expense",
-      "category": "bills",
-      "wallet": "bank",
-      "date": "2026-10-10",
-      "createdAt": "2026-10-10T19:51:06.000Z"
-    }
-  ]
+  "data": {
+    "period": {
+      "type": "this_month",
+      "startDate": "2026-10-01",
+      "endDate": "2026-10-31"
+    },
+    "summary": {
+      "totalBalance": 36500000,
+      "totalIncome": 18000000,
+      "totalExpense": 3000000,
+      "netCashflow": 15000000,
+      "savingsRate": 83,
+      "totalBudget": 2000000,
+      "totalBudgetSpent": 2100000,
+      "remainingBudget": 0,
+      "exceededBudgetCount": 1,
+      "exceededBudgetAmount": 300000,
+      "transactionCount": 5
+    },
+    "categoryBreakdown": [
+      {
+        "categoryId": "food",
+        "name": "Makanan & Minuman",
+        "color": "#ef4444",
+        "icon": "Utensils",
+        "spent": 1800000,
+        "percentage": 60.0,
+        "budget": 1500000,
+        "isExceeded": true
+      },
+      {
+        "categoryId": "entertainment",
+        "name": "Hiburan",
+        "color": "#8b5cf6",
+        "icon": "Film",
+        "spent": 900000,
+        "percentage": 30.0,
+        "budget": 0,
+        "isExceeded": false
+      },
+      {
+        "categoryId": "transport",
+        "name": "Transportasi",
+        "color": "#f59e0b",
+        "icon": "Car",
+        "spent": 300000,
+        "percentage": 10.0,
+        "budget": 500000,
+        "isExceeded": false
+      }
+    ],
+    "monthlyTrend": [
+      { "key": "2026-05", "month": "Mei 2026", "income": 0, "expense": 0, "net": 0 },
+      { "key": "2026-06", "month": "Jun 2026", "income": 0, "expense": 0, "net": 0 },
+      { "key": "2026-07", "month": "Jul 2026", "income": 0, "expense": 0, "net": 0 },
+      { "key": "2026-08", "month": "Agu 2026", "income": 0, "expense": 0, "net": 0 },
+      { "key": "2026-09", "month": "Sep 2026", "income": 12000000, "expense": 1000000, "net": 11000000 },
+      { "key": "2026-10", "month": "Okt 2026", "income": 18000000, "expense": 3000000, "net": 15000000 }
+    ],
+    "dailyTrend": [
+      { "date": "2026-10-10", "formattedDate": "10 Okt", "income": 18000000, "expense": 0, "net": 18000000 },
+      { "date": "2026-10-15", "formattedDate": "15 Okt", "income": 0, "expense": 3000000, "net": -3000000 }
+    ],
+    "wallets": [
+      { "id": "w-1", "name": "BCA Utama", "type": "Bank", "color": "#6366f1", "balance": 33300000 },
+      { "id": "w-2", "name": "Dompet Tunai", "type": "Cash", "color": "#10b981", "balance": 3200000 }
+    ],
+    "budgetAnalysis": [
+      {
+        "budgetId": "b-1",
+        "categoryId": "food",
+        "categoryName": "Makanan & Minuman",
+        "limit": 1500000,
+        "spent": 1800000,
+        "remaining": 0,
+        "isExceeded": true,
+        "exceededBy": 300000,
+        "percentage": 100
+      }
+    ]
+  }
 }
 ```
 
 ---
 
-## 5. Hasil Pengujian Aktual
+## 5. Ringkasan Pengujian dan Verifikasi Build
 
-Seluruh pengujian dijalankan langsung terhadap server lokal aktif pada port 3000.
-
-### 1. Test Suite Tahap 4 (`backend/test-tahap4.js`)
-Perintah eksekusi:
-```powershell
-node backend/test-tahap4.js
+### 1. Eksekusi Test Suite Tahap 7 (`test-tahap7.js`)
+```bash
+node test-tahap7.js
 ```
-Hasil Aktual:
+Hasil: **55 dari 55 assertion LULUS (100%)**.  
+Mencakup:
+- Proteksi token autentikasi (401 pada request tanpa token atau token rusak).
+- Penanganan data kosong bagi pengguna baru (zero transactions tanpa runtime crash).
+- Agregasi matematis saldo dompet, pemasukan, pengeluaran, net cashflow, dan savings rate.
+- Filter periode waktu (`this_month`, `last_month`, `last_3_months`, `custom`).
+- Validasi format tanggal ISO dan penolakan `startDate > endDate` (400 Bad Request).
+- Pendeteksian kuantitas & nominal anggaran yang terlampaui.
+- Akurasi persentase beban kategori dan pengurutan kategori terbesar.
+- Isolasi data antar akun (User A vs User B).
+
+### 2. Matriks Pengujian Regresi Keseluruhan
+| Test Suite | Lingkup Pengujian | Status | Skor |
+|---|---|---|---|
+| `test-tahap7.js` | Dashboard & Analitik Keuangan, Agregasi, Filter, Empty Data, Isolasi | **PASS** | 55 Lulus, 0 Gagal |
+| `test-tahap6.js` | Ekspor CSV, Formula Injection Mitigation, Cadangan JSON, Atomic Import | **PASS** | 53 Lulus, 0 Gagal |
+| `test-tahap5.js` | HttpOnly Cookie, Rotasi Refresh Token, CSRF, Reuse Detection | **PASS** | 36 Lulus, 0 Gagal |
+| `test-tahap4.js` | Kategori Dinamis, Paginasi Transaksi, Multi-filter DB | **PASS** | 45 Lulus, 0 Gagal |
+| `test-wallets-budgets.js` | CRUD Dompet, Limit Anggaran, Proteksi Relasi Transaksi | **PASS** | 32 Lulus, 0 Gagal |
+| `test-auth.js` | Multi-tenant Auth, Hashing Bcrypt, Isolasi Kepemilikan Data | **PASS** | 27 Lulus, 0 Gagal |
+| `test-api.js` | Health Check, CRUD Mutasi Transaksi Dasar | **PASS** | 20 Lulus, 0 Gagal |
+| **TOTAL** | **Seluruh Rangkaian Uji Otomatis FinTrack** | **100% PASS** | **268 Lulus, 0 Gagal** |
+
+### 3. Kompilasi & Build Frontend
+```bash
+cd fintrack && npm.cmd run build
+```
+Hasil:
 ```text
-====================================================
-🧪 FINTRACK TAHAP 4 TEST SUITE: CATEGORIES & FILTER
-====================================================
-
-[TEST GROUP 0] Memeriksa Health Server
-  ✅ PASS: GET /api/health mengembalikan 200 OK
-
-[TEST GROUP 1] Registrasi User A dan User B
-  ✅ PASS: User A berhasil registrasi dan mendapat token
-  ✅ PASS: User B berhasil registrasi dan mendapat token
-
-[TEST GROUP 2] Kategori Sistem & Akses Auth
-  ✅ PASS: GET /api/categories tanpa token ditolak (401 Unauthorized)
-  ✅ PASS: User A dapat mengambil daftar kategori (200 OK)
-  ✅ PASS: Mengembalikan setidaknya 13 kategori sistem (ditemukan: 13)
-  ✅ PASS: Kategori sistem "food" ditemukan dengan isSystem=true
-  ✅ PASS: Query ?type=expense hanya mengembalikan kategori expense
-
-[TEST GROUP 3] Perlindungan Kategori Sistem
-  ✅ PASS: PUT /api/categories/food ditolak dengan 403 Forbidden
-  ✅ PASS: DELETE /api/categories/food ditolak dengan 403 Forbidden
-
-[TEST GROUP 4] Pembuatan & Validasi Kategori Kustom
-  ✅ PASS: Nama kategori < 2 karakter ditolak (400 Bad Request)
-  ✅ PASS: Tipe kategori selain income/expense ditolak (400 Bad Request)
-  ✅ PASS: User A berhasil membuat kategori kustom "Langganan AI" (201 Created)
-  ✅ PASS: User A berhasil membuat kategori kustom Income "Dividen Saham"
-  ✅ PASS: Kategori kustom duplikat untuk user yang sama ditolak (400 Bad Request)
-
-[TEST GROUP 5] Isolasi Multi-Tenant Kategori
-  ✅ PASS: User B tidak dapat mengakses kategori User A via ID (404 Not Found)
-  ✅ PASS: User B tidak dapat mengubah kategori User A (404 Not Found)
-  ✅ PASS: User B tidak dapat menghapus kategori User A (404 Not Found)
-  ✅ PASS: Daftar kategori User B tidak memuat kategori kustom User A
-
-[TEST GROUP 6] Integrasi Kategori pada Transaksi & Proteksi Hapus
-  ✅ PASS: Transaksi dengan ID kategori fiktif ditolak (400 Bad Request)
-  ✅ PASS: Transaksi dengan kategori kustom berhasil dibuat
-  ✅ PASS: Penghapusan kategori yang masih digunakan transaksi ditolak (400 Bad Request)
-
-[TEST GROUP 7] Filter Transaksi & Paginasi Database
-  ✅ PASS: GET /api/transactions?type=income sukses (200 OK)
-  ✅ PASS: Filter type=income menghasilkan tepat 2 transaksi pemasukan (ditemukan: 2)
-  ✅ PASS: Filter category=food menghasilkan 2 transaksi (ditemukan: 2)
-  ✅ PASS: Filter wallet=cash menghasilkan tepat 2 transaksi (ditemukan: 2)
-  ✅ PASS: Filter search=makan mengembalikan 2 transaksi yang cocok (ditemukan: 2)
-  ✅ PASS: Filter rentang tanggal 2026-10-03 s/d 2026-10-05 mengembalikan 3 transaksi (ditemukan: 3)
-  ✅ PASS: Format startDate tidak valid ditolak (400 Bad Request)
-  ✅ PASS: startDate > endDate ditolak (400 Bad Request)
-
-[TEST GROUP 8] Pengujian Paginasi & Metadata
-  ✅ PASS: GET transaksi paginasi mengembalikan 200 OK
-  ✅ PASS: Halaman 1 dengan limit 3 mengembalikan 3 transaksi
-  ✅ PASS: Metadata pagination.page === 1
-  ✅ PASS: Metadata pagination.limit === 3
-  ✅ PASS: Metadata pagination.total === 8 (ditemukan: 8)
-  ✅ PASS: Metadata pagination.totalPages === 3 (ditemukan: 3)
-  ✅ PASS: Halaman 2 dengan limit 3 mengembalikan 3 transaksi
-  ✅ PASS: Data halaman 2 berbeda dengan halaman 1
-  ✅ PASS: Halaman 3 mengembalikan sisa 2 transaksi
-  ✅ PASS: Halaman di luar jangkauan mengembalikan array kosong
-  ✅ PASS: Query page < 1 ditolak (400 Bad Request)
-  ✅ PASS: Limit melebihi batas dipatok aman ke maksimum 100
-
-[TEST GROUP 9] Isolasi Transaksi Antar Pengguna
-  ✅ PASS: User B tidak dapat melihat transaksi User A (total: 0)
-
-[TEST GROUP 10] Pembaruan & Penghapusan Kategori Kustom
-  ✅ PASS: User A berhasil mengubah kategori miliknya
-  ✅ PASS: User A berhasil menghapus kategori kustom yang tidak dipakai
-
-====================================================
-📊 RINGKASAN HASIL TEST TAHAP 4:
-   Total Lulus (PASS): 45
-   Total Gagal (FAIL): 0
-====================================================
-```
-
-### 2. Regresi Dompet & Anggaran (`backend/test-wallets-budgets.js`)
-Perintah eksekusi:
-```powershell
-node backend/test-wallets-budgets.js
-```
-Hasil Aktual: **32 PASSED, 0 FAILED** (100% Lulus).
-
-### 3. Regresi Autentikasi & Isolasi Data (`backend/test-auth.js`)
-Perintah eksekusi:
-```powershell
-node backend/test-auth.js
-```
-Hasil Aktual: **27 PASSED, 0 FAILED** (100% Lulus).
-
-### 4. Regresi CRUD Transaksi (`backend/test-api.js`)
-Perintah eksekusi:
-```powershell
-node backend/test-api.js
-```
-Hasil Aktual: **20 PASSED, 0 FAILED** (100% Lulus).
-
-### 5. Pengujian Persistensi Data Setelah Server Restart
-- Proses server dihentikan menggunakan sinyal shutdown.
-- Server dijalankan ulang (`node server.js`).
-- Seluruh 45 assertion `test-tahap4.js` dijalankan ulang dan tetap lulus 100%, mengonfirmasi persistensi tabel `categories`, `transactions`, `wallets`, `budgets`, dan `users` di dalam file SQLite `dev.db`.
-
-### 6. Hasil Build Frontend (`fintrack`)
-Perintah eksekusi:
-```powershell
-npm.cmd run build
-```
-Hasil Aktual:
-```text
-> fintrack@0.0.0 build
-> vite build
-
 vite v8.3.2 building client environment for production...
 transforming...
 ✓ 2475 modules transformed.
 rendering chunks...
 computing gzip size...
 dist/index.html                   1.22 kB │ gzip:   0.67 kB
-dist/assets/index-C85NT1g8.css   27.40 kB │ gzip:   5.40 kB
-dist/assets/index-BXah0lEI.js   700.85 kB │ gzip: 203.46 kB
-✓ built in 728ms
+dist/assets/index-CxtU-qQg.css   30.01 kB │ gzip:   5.74 kB
+dist/assets/index-BgG3gR7l.js   732.51 kB │ gzip: 210.59 kB
+✓ built in 1.37s
 ```
 
 ---
 
-## 6. Prioritas 4: Audit Keamanan Cookie & Rencana Migrasi Terpisah
+## 6. Panduan Langkah Verifikasi Manual di Browser
 
-> **Catatan Penting**: Sesuai instruksi wajib, mekanisme access token pada tahap ini **tidak diganti secara diam-diam**. Bagian ini merupakan audit teknis mendalam dan cetak biru (*blueprint*) migrasi arsitektur sesi ke cookie `HttpOnly` untuk Tahap 5.
-
-### 1. Kondisi Saat Ini vs Ancaman Keamanan
-- **Kondisi Aktual**:
-  - Access token disimpan di `localStorage` pada browser (`fintrack_jwt_token_v1`) dan dikirimkan melalui header `Authorization: Bearer <token>`.
-  - Token memiliki masa berlaku 7 hari (`JWT_EXPIRES_IN=7d`).
-- **Ancaman & Keterbatasan**:
-  - `localStorage` dapat diakses oleh skrip JavaScript apa pun yang dieksekusi di context origin aplikasi. Jika terdapat celah *Cross-Site Scripting* (XSS) melalui dependensi pihak ketiga atau injeksi HTML, token dapat dicuri oleh pihak luar.
-  - Token yang dicuri memiliki masa hidup panjang (7 hari) tanpa mekanisme pembatalan (*revocation*) terpusat.
-
-### 2. Desain Arsitektur Target (HttpOnly Cookie + CSRF Protection)
-
-```
-[ Frontend: React ]                                     [ Backend: Express ]
-       |                                                         |
-       | 1. POST /api/auth/login { email, password }             |
-       |-------------------------------------------------------->|
-       |                                                         | Validasi kredensial
-       |                                                         | Buat Access Token (15 menit)
-       |                                                         | Buat Refresh Token (7 hari)
-       | 2. Set-Cookie: refreshToken (HttpOnly, Secure, SameSite)| Simpan Refresh Token di DB
-       |    JSON: { accessToken, user }                          |
-       |<--------------------------------------------------------|
-       |                                                         |
-       | 3. Simpan accessToken hanya di MEMORI (React State)     |
-       |                                                         |
-       | 4. GET /api/transactions (Header Authorization: Bearer) |
-       |-------------------------------------------------------->| Verifikasi Access Token
-       |                                                         |
-       | --- Ketika Access Token Kedaluwarsa (HTTP 401) ---       |
-       | 5. POST /api/auth/refresh (Cookie otomatis dikirim)     |
-       |-------------------------------------------------------->| Verifikasi Refresh Token di DB
-       | 6. JSON: { newAccessToken }                             | Rotasi Refresh Token baru
-       |<--------------------------------------------------------|
-```
-
-### 3. Kebutuhan Perubahan Teknis pada Tahap 5
-
-#### A. Backend Express & Database
-1. **Model `RefreshToken` di Prisma**:
-   ```prisma
-   model RefreshToken {
-     id        String   @id @default(uuid())
-     tokenHash String   @unique
-     userId    String
-     revoked   Boolean  @default(false)
-     expiresAt DateTime
-     createdAt DateTime @default(now())
-     user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-   }
-   ```
-2. **Library Pendukung**:
-   - `cookie-parser`: Mem-parsing cookie masuk dari request headers.
-3. **Konfigurasi Cookie `res.cookie()`**:
-   ```javascript
-   res.cookie('refreshToken', refreshToken, {
-     httpOnly: true,                                       // Tidak dapat dibaca oleh JavaScript (Anti-XSS)
-     secure: process.env.NODE_ENV === 'production',        // Wajib HTTPS pada environment production
-     sameSite: process.env.NODE_ENV === 'production' ? 'strict' : 'lax', // Kebijakan pencegahan CSRF
-     maxAge: 7 * 24 * 60 * 60 * 1000,                      // 7 hari
-     path: '/api/auth'                                     // Batasi cookie hanya dikirim ke endpoint autentikasi
-   });
-   ```
-4. **Endpoint Baru**:
-   - `POST /api/auth/refresh`: Membaca cookie `refreshToken`, memverifikasi di database, menerbitkan access token baru di memori, serta merotasi refresh token (*Refresh Token Rotation*).
-   - `POST /api/auth/logout`: Menandai refresh token sebagai `revoked` di database dan menghapus cookie via `res.clearCookie('refreshToken')`.
-
-#### B. Konfigurasi CORS & Pertukaran Kredensial
-- Express CORS wajib mengizinkan pertukaran kredensial:
-  ```javascript
-  app.use(cors({
-    origin: process.env.CLIENT_URL || 'http://localhost:5173',
-    credentials: true // Mengizinkan transmisi cookie antar-port/origin
-  }));
-  ```
-  *Catatan penting*: Ketika `credentials: true`, nilai `origin` **tidak boleh berupa wildcard `*`**.
-
-#### C. Perlindungan CSRF (Cross-Site Request Forgery)
-- Karena cookie dikirim otomatis oleh browser pada request lintas domain, perlindungan terhadap CSRF menjadi wajib:
-  - Kebijakan `SameSite: 'lax'` / `'strict'` memblokir pengiriman cookie pada request lintas situs (*cross-site POST*).
-  - Untuk perlindungan berlapis, gunakan pola **Double Submit Cookie** atau custom header (misal `X-Requested-With: XMLHttpRequest` atau `X-CSRF-Token`), karena request lintas situs (*simple cross-origin request*) tidak dapat menambahkan custom header tanpa izin *preflight* CORS.
-
-#### D. Frontend (`fintrack`)
-- **Penyimpanan Token**:
-  - Hapus penyimpanan access token dari `localStorage`.
-  - Simpan access token murni di dalam memori React state (`FinanceContext`).
-- **Fetch API Request**:
-  - Semua panggilan `fetch()` ke endpoint auth wajib menyertakan:
-    ```javascript
-    fetch(url, {
-      credentials: 'include', // Menginstruksikan browser menyertakan cookie
-      ...
-    });
-    ```
-- **Auto Silent Refresh (Token Expiry Handling)**:
-  - Buat interceptor di `api.js`: Jika request mengembalikan HTTP 401 dan bukan dari endpoint login, panggil otomatis `refreshAccessTokenApi()`. Jika berhasil, ulangi (*retry*) request awal dengan token baru. Jika refresh token juga kedaluwarsa, arahkan pengguna ke halaman login.
-
-#### E. Perbedaan Konfigurasi Environment Development vs Production
-| Konfigurasi | Development | Production |
-|---|---|---|
-| Protokol | HTTP (`http://localhost:5173`) | HTTPS (`https://fintrack.app`) |
-| `cookie.secure` | `false` (karena localhost HTTP) | `true` (wajib HTTPS, browser menolak cookie secure di plain HTTP) |
-| `cookie.sameSite` | `'lax'` (mendukung port berbeda 5173 -> 3000) | `'strict'` atau `'lax'` |
-| `CORS origin` | `http://localhost:5173` | `https://fintrack.app` |
-| `JWT_SECRET` | Kunci dev yang aman di `.env` | Nilai secret acak dengan entropi tinggi via CI/CD secret manager |
+1. **Jalankan Backend dan Frontend**:
+   - Backend: Jalankan `node server.js` di direktori `backend` (port 3000).
+   - Frontend: Jalankan `npm run dev` di direktori `fintrack` (port 5173).
+2. **Akses Aplikasi**:
+   - Buka browser (Chrome, Edge, atau Firefox) dan arahkan ke `http://localhost:5173`.
+   - Jika belum login, form masuk modern FinTrack akan tampil. Klik **Masuk Cepat dengan Akun Demo** atau buat akun baru.
+3. **Uji Filter Periode**:
+   - Pada toolbar atas Dashboard, klik tombol **Bulan Ini**, **Bulan Sebelumnya**, dan **3 Bulan Terakhir**.
+   - Perhatikan bahwa kelima kartu KPI, grafik arus kas, dan diagram donat seketika berubah mengikuti periode waktu yang dipilih.
+   - Pilih **Rentang Khusus**, lalu masukkan tanggal awal dan tanggal akhir. Metrik akan terhitung akurat sesuai rentang tersebut.
+4. **Uji 5 Kartu Ringkasan (KPI)**:
+   - Verifikasi kartu **Total Saldo Bersih** menampilkan total saldo dari semua dompet/rekening.
+   - Verifikasi kartu **Total Pemasukan** dan **Total Pengeluaran** menampilkan nominal dalam format Rupiah (`Rp ...`).
+   - Verifikasi kartu **Selisih Arus Kas (Net)** dan rasio tabungan.
+   - Verifikasi kartu **Sisa Plafon Anggaran** menampilkan status apakah ada anggaran yang terlampaui.
+5. **Uji Grafik Arus Kas**:
+   - Klik tombol **Bulanan** untuk melihat tren perbandingan 6 bulan.
+   - Klik tombol **Harian** untuk melihat riwayat arus dana harian pada periode yang sedang difilter.
+   - Arahkan kursor (*hover*) ke area grafik untuk melihat rincian angka pada tooltip Rupiah.
+6. **Uji Analisis Kategori**:
+   - Periksa panel **Analisis Kategori Pengeluaran Terbesar**.
+   - Amati bilah progres persentase dan lencana peringatan merah jika pengeluaran melebihi limit anggaran.
+7. **Periksa Console Browser**:
+   - Buka DevTools (`F12` -> tab **Console** dan **Network**).
+   - Pastikan tidak ada unhandled runtime errors, tidak ada error CORS, dan request ke `/api/analytics/summary` mengembalikan status `200 OK`.
 
 ---
 
-## 7. Error yang Belum Selesai & Risiko yang Tersisa
+## 7. Risiko yang Masih Tersisa
 
-1. **Penyimpanan Token Saat Ini Masih di LocalStorage**:
-   - Access token saat ini masih disimpan di `localStorage` pada browser hingga migrasi Tahap 5 diterapkan. Risiko XSS masih ada jika terdapat skrip eksternal berbahaya yang dieksekusi di context klien.
-2. **Konkurensi Database SQLite**:
-   - SQLite bekerja sangat baik untuk kebutuhan personal single-user / multi-tenant beban ringan. Namun, jika skala pengguna bertambah tinggi dan banyak mutasi write terjadi bersamaan (*concurrent write locks*), proyek perlu mempertimbangkan migrasi ke PostgreSQL.
-3. **Pengelolaan File Ekspor**:
-   - Fitur ekspor transaksi ke CSV/PDF belum diimplementasikan di backend.
-
----
-
-## 8. Rencana Tahap 5
-
-1. **Implementasi Migrasi Autentikasi HttpOnly Cookie & Refresh Token Rotation**:
-   - Terapkan tabel `RefreshToken` di Prisma.
-   - Pindahkan token frontend dari `localStorage` ke in-memory state dengan silent refresh interceptor.
-2. **Fitur Ekspor & Impor Data Finansial**:
-   - Endpoint `GET /api/transactions/export?format=csv` dan `format=pdf`.
-   - Fasilitas pencadangan data mandiri untuk pengguna.
-3. **Visualisasi Analitik Lanjutan**:
-   - Grafik tren multi-bulan interaktif dan perbandingan realisasi anggaran vs pengeluaran riil per kategori kustom.
+1. **Agregasi Volume Data Sangat Besar (High-Volume Big Data)**:
+   - Agregasi saat ini diproses secara instan di level SQLite / Node.js runtime. Jika satu akun pengguna memiliki lebih dari 100.000 transaksi mutasi, disarankan menambahkan index komposit database `@@index([userId, date])` dan caching level Redis untuk kalkulasi bulanan.
+2. **Penyesuaian Jam Transaksi pada Zona Waktu Pengguna (Timezone Offset)**:
+   - Format tanggal saat ini dipatok berdasarkan hari kalender lokal pengguna (`YYYY-MM-DD`). Transaksi yang dicatat di batas pergantian tengah malam (misal pukul 23:59 WIB) menggunakan filter UTC+0 pada server mungkin memiliki pergeseran beberapa jam jika server di-deploy di cloud dengan zona waktu UTC murni. Disarankan menyertakan header `X-Timezone` di masa depan jika dideploy ke multi-region.

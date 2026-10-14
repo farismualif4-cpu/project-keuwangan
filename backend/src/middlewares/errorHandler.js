@@ -3,7 +3,10 @@ export const errorHandler = (err, req, res, next) => {
   // Catat error ke console server untuk debugging
   console.error('[SERVER ERROR]:', err);
 
-  const statusCode = err.statusCode || 500;
+  let statusCode = err.statusCode || 500;
+  if (err.message && err.message.includes('CORS blocked')) {
+    statusCode = 403;
+  }
   const message = err.message || 'Terjadi kesalahan internal pada server';
 
   res.status(statusCode).json({

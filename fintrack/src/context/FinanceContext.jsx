@@ -16,9 +16,14 @@ import {
   loginApi,
   registerApi,
   getMeApi,
+  refreshApi,
+  logoutApi,
+  setAccessToken,
+  setOnUnauthorized,
   getWalletsApi,
   createWalletApi,
   updateWalletApi,
+  deleteWalletApi,
   getBudgetsApi,
   createBudgetApi,
   updateBudgetApi,
@@ -26,12 +31,12 @@ import {
   getCategoriesApi,
   createCategoryApi,
   updateCategoryApi,
-  deleteCategoryApi
+  deleteCategoryApi,
+  getAnalyticsSummaryApi
 } from '../services/api';
 
 const FinanceContext = createContext(null);
 
-const STORAGE_KEY_TOKEN = 'fintrack_jwt_token_v1';
 const STORAGE_KEY_USER = 'fintrack_user_v1';
 const STORAGE_KEY_TX = 'fintrack_transactions_v1';
 
@@ -39,39 +44,32 @@ export function FinanceProvider({ children }) {
   // Navigation & UI State
   const [activePage, setActivePage] = useState('dashboard');
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
-  const [periodFilter, setPeriodFilter] = useState('this_month'); // 'this_month', 'all'
+  const [periodFilter, setPeriodFilter] = useState('this_month'); // 'this_month', 'last_month', 'last_3_months', 'custom'
+  const [customStartDate, setCustomStartDate] = useState('');
+  const [customEndDate, setCustomEndDate] = useState('');
+
+  // Backend Analytics Cache State
+  const [analyticsData, setAnalyticsData] = useState(null);
+  const [analyticsLoading, setAnalyticsLoading] = useState(false);
   
   // Status Integrasi Backend API
   const [isLoading, setIsLoading] = useState(false);
   const [isBackendConnected, setIsBackendConnected] = useState(false);
   const [apiError, setApiError] = useState(null);
 
-  // Authentication State
-  const [token, setToken] = useState(() => {
-    try {
-      return localStorage.getItem(STORAGE_KEY_TOKEN) || null;
-    } catch {
-      return null;
-    }
-  });
-
-  const [user, setUser] = useState(() => {
-    try {
-      const savedUser = localStorage.getItem(STORAGE_KEY_USER);
-      return savedUser ? JSON.parse(savedUser) : null;
-    } catch {
-      return null;
-    }
-  });
-
-  const [authLoading, setAuthLoading] = useState(Boolean(token));
+  // Authentication State - Token dijaga MURNI di memori browser (tidak disimpan di localStorage)
+  const [token, setToken] = useState(null);
+  const [user, setUser] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
   const [authError, setAuthError] = useState(null);
 
   // Financial Domain States (Disinkronkan dengan Database Backend per User)
   const [transactions, setTransactions] = useState(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY_TX);
-      return saved ? JSON.parse(saved) : [];
+      if (!saved) return [];
+      const parsed = JSON.parse(saved);
+      return Array.isArray(parsed) ? parsed : [];
     } catch {
       return [];
     }
@@ -131,34 +129,12 @@ export function FinanceProvider({ children }) {
     all: [...CATEGORIES.expense, ...CATEGORIES.income]
   }));
 
-  // Sinkronisasi otomatis auth ke LocalStorage
-  useEffect(() => {
-    if (token) {
-      localStorage.setItem(STORAGE_KEY_TOKEN, token);
-    } else {
-      localStorage.removeItem(STORAGE_KEY_TOKEN);
-    }
-  }, [token]);
-
-  useEffect(() => {
-    if (user) {
-      localStorage.setItem(STORAGE_KEY_USER, JSON.stringify(user));
-    } else {
-      localStorage.removeItem(STORAGE_KEY_USER);
-    }
-  }, [user]);
-
-  useEffect(() => {
-    if (token && transactions.length > 0) {
-      localStorage.setItem(STORAGE_KEY_TX, JSON.stringify(transactions));
-    } else if (!token) {
-      localStorage.removeItem(STORAGE_KEY_TX);
-    }
-  }, [transactions, token]);
-
-  // Logout Function: Bersihkan sesi dan seluruh data finansial dari memori
-  const logout = useCallback(() => {
-    hasInitializedAuth.current = false;
+  // Logout Function: Bersihkan sesi di database & cookie via logoutApi dan reset memori
+  // Dideklarasikan sebelum hooks useEffect agar tidak memicu TDZ (Temporal Dead Zone) ReferenceError
+  const logout = useCallback(async () => {
+    try {
+      await logoutApi();
+    } catch {}
     setToken(null);
     setUser(null);
     setTransactions([]);
@@ -169,10 +145,31 @@ export function FinanceProvider({ children }) {
       income: CATEGORIES.income,
       all: [...CATEGORIES.expense, ...CATEGORIES.income]
     });
-    localStorage.removeItem(STORAGE_KEY_TOKEN);
-    localStorage.removeItem(STORAGE_KEY_USER);
-    localStorage.removeItem(STORAGE_KEY_TX);
+    try {
+      localStorage.removeItem('fintrack_jwt_token_v1');
+      localStorage.removeItem(STORAGE_KEY_USER);
+      localStorage.removeItem(STORAGE_KEY_TX);
+    } catch {}
     setIsBackendConnected(false);
+  }, []);
+
+  // Sinkronisasi in-memory access token ke layer service api
+  useEffect(() => {
+    setAccessToken(token);
+  }, [token]);
+
+  // Daftarkan callback saat request mendeteksi 401 dan refresh gagal
+  useEffect(() => {
+    setOnUnauthorized(() => {
+      logout();
+    });
+  }, [logout]);
+
+  // Hapus token legacy di localStorage jika masih tersisa dari versi terdahulu
+  useEffect(() => {
+    try {
+      localStorage.removeItem('fintrack_jwt_token_v1');
+    } catch {}
   }, []);
 
   // 1. Muat Transaksi dari Backend
@@ -320,34 +317,34 @@ export function FinanceProvider({ children }) {
     }
   }, [loadTransactionsFromBackend, loadWalletsFromBackend, loadBudgetsFromBackend, loadCategoriesFromBackend]);
 
-  // Inisialisasi Sesi Aplikasi saat Dimuat (Hanya berjalan sekali saat mount)
+  // Inisialisasi Sesi Aplikasi saat Dimuat via Silent Refresh (HttpOnly Cookie)
   useEffect(() => {
     if (hasInitializedAuth.current) return;
     hasInitializedAuth.current = true;
 
     const initAuth = async () => {
-      const savedToken = localStorage.getItem(STORAGE_KEY_TOKEN);
-      if (!savedToken) {
-        setAuthLoading(false);
-        return;
-      }
-
       setAuthLoading(true);
       setAuthError(null);
       try {
-        const res = await getMeApi(savedToken);
+        // Coba silent refresh otomatis menggunakan HttpOnly cookie
+        const res = await refreshApi();
+        const userToken = res.token || res.data?.token;
         const userData = res.user || res.data?.user;
-        if (userData) {
+        if (userToken && userData) {
           setUser(userData);
-          setToken(savedToken);
+          setToken(userToken);
           setIsBackendConnected(true);
-          await loadAllUserData(savedToken, userData);
+          await loadAllUserData(userToken, userData);
         } else {
-          logout();
+          setToken(null);
+          setUser(null);
+          setIsBackendConnected(false);
         }
       } catch (err) {
-        console.warn('[FinanceContext] Token tidak valid atau kedaluwarsa:', err.message);
-        logout();
+        // Tidak ada cookie aktif atau sesi telah berakhir -> tetap di login screen
+        setToken(null);
+        setUser(null);
+        setIsBackendConnected(false);
       } finally {
         setAuthLoading(false);
       }
@@ -367,8 +364,6 @@ export function FinanceProvider({ children }) {
       if (userToken && userData) {
         setToken(userToken);
         setUser(userData);
-        localStorage.setItem(STORAGE_KEY_TOKEN, userToken);
-        localStorage.setItem(STORAGE_KEY_USER, JSON.stringify(userData));
         setIsBackendConnected(true);
 
         await loadAllUserData(userToken, userData);
@@ -392,13 +387,13 @@ export function FinanceProvider({ children }) {
       if (userToken && userData) {
         setToken(userToken);
         setUser(userData);
-        localStorage.setItem(STORAGE_KEY_TOKEN, userToken);
-        localStorage.setItem(STORAGE_KEY_USER, JSON.stringify(userData));
         setIsBackendConnected(true);
 
         // Bersihkan data lokal lama milik sesi sebelumnya
         setTransactions([]);
-        localStorage.removeItem(STORAGE_KEY_TX);
+        try {
+          localStorage.removeItem(STORAGE_KEY_TX);
+        } catch {}
 
         await loadAllUserData(userToken, userData);
         return userData;
@@ -618,19 +613,20 @@ export function FinanceProvider({ children }) {
 
   // Perhitungan Dompet Dinamis: Menghitung saldo awal + mutasi riil transaksi
   const dynamicWallets = useMemo(() => {
-    const baseList = wallets.length > 0 ? wallets : INITIAL_WALLETS_DEFAULT;
+    const baseList = Array.isArray(wallets) && wallets.length > 0 ? wallets : INITIAL_WALLETS_DEFAULT;
+    const txList = Array.isArray(transactions) ? transactions : [];
 
     return baseList.map((w) => {
       let income = 0;
       let expense = 0;
 
-      transactions.forEach((tx) => {
-        const wKey = tx.walletId || tx.wallet;
-        if (wKey === w.id || (wKey && w.name && wKey.toLowerCase() === w.name.toLowerCase())) {
-          if (tx.type === 'income') {
-            income += Number(tx.amount || 0);
+      txList.forEach((tx) => {
+        const wKey = tx?.walletId || tx?.wallet;
+        if (wKey === w.id || (wKey && w.name && String(wKey).toLowerCase() === String(w.name).toLowerCase())) {
+          if (tx?.type === 'income') {
+            income += Number(tx?.amount || 0);
           } else {
-            expense += Number(tx.amount || 0);
+            expense += Number(tx?.amount || 0);
           }
         }
       });
@@ -645,14 +641,109 @@ export function FinanceProvider({ children }) {
     });
   }, [wallets, transactions]);
 
-  // Kalkulasi Metrik Finansial (Bebas magic number, 100% konsisten)
+  // Helper kalkulasi rentang tanggal berdasarkan filter periode
+  const calculatePeriodRange = useCallback((period, customStart, customEnd) => {
+    const now = new Date();
+    let start;
+    let end;
+
+    switch (period) {
+      case 'last_month': {
+        const prevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+        start = new Date(prevMonth.getFullYear(), prevMonth.getMonth(), 1, 0, 0, 0, 0);
+        end = new Date(prevMonth.getFullYear(), prevMonth.getMonth() + 1, 0, 23, 59, 59, 999);
+        break;
+      }
+      case 'last_3_months': {
+        const threeMonthsAgo = new Date(now.getFullYear(), now.getMonth() - 2, 1);
+        start = new Date(threeMonthsAgo.getFullYear(), threeMonthsAgo.getMonth(), 1, 0, 0, 0, 0);
+        end = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+        break;
+      }
+      case 'custom': {
+        if (customStart) {
+          start = new Date(customStart);
+          if (isNaN(start.getTime())) start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+          else start.setHours(0, 0, 0, 0);
+        } else {
+          start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+        }
+
+        if (customEnd) {
+          end = new Date(customEnd);
+          if (isNaN(end.getTime())) end = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+          else end.setHours(23, 59, 59, 999);
+        } else {
+          end = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+        }
+        break;
+      }
+      case 'all': {
+        start = new Date(0);
+        end = new Date(now.getFullYear() + 10, 11, 31, 23, 59, 59, 999);
+        break;
+      }
+      case 'this_month':
+      default: {
+        start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+        end = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+        break;
+      }
+    }
+
+    return { start, end };
+  }, []);
+
+  // Ambil ringkasan analitik dari Backend API
+  const fetchAnalyticsSummary = useCallback(async (period = periodFilter, customStart = customStartDate, customEnd = customEndDate) => {
+    const curToken = tokenRef.current;
+    if (!curToken) return null;
+    setAnalyticsLoading(true);
+    try {
+      const res = await getAnalyticsSummaryApi({
+        period,
+        startDate: customStart,
+        endDate: customEnd
+      }, curToken);
+      if (res && res.success && res.data) {
+        setAnalyticsData(res.data);
+        return res.data;
+      }
+    } catch (err) {
+      console.warn('[FinanceContext] Gagal sinkronisasi analitik backend:', err.message);
+    } finally {
+      setAnalyticsLoading(false);
+    }
+    return null;
+  }, [periodFilter, customStartDate, customEndDate]);
+
+  // Muat analitik backend saat token, periodFilter, atau transaksi berubah
+  useEffect(() => {
+    if (token) {
+      fetchAnalyticsSummary(periodFilter, customStartDate, customEndDate);
+    }
+  }, [token, periodFilter, customStartDate, customEndDate, transactions, fetchAnalyticsSummary]);
+
+  // Kalkulasi Metrik Finansial (Konsisten dengan periode terpilih, bebas magic number)
   const metrics = useMemo(() => {
+    const { start, end } = calculatePeriodRange(periodFilter, customStartDate, customEndDate);
+    const txList = Array.isArray(transactions) ? transactions : [];
+    const budgetList = Array.isArray(budgets) ? budgets : [];
+
+    // Filter transaksi berdasarkan rentang waktu periode terpilih
+    const periodTransactions = txList.filter((tx) => {
+      if (!tx?.date) return false;
+      const d = new Date(tx.date);
+      if (isNaN(d.getTime())) return false;
+      return d.getTime() >= start.getTime() && d.getTime() <= end.getTime();
+    });
+
     let totalIncome = 0;
     let totalExpense = 0;
 
-    transactions.forEach((tx) => {
-      const amt = Number(tx.amount) || 0;
-      if (tx.type === 'income') {
+    periodTransactions.forEach((tx) => {
+      const amt = Number(tx?.amount) || 0;
+      if (tx?.type === 'income') {
         totalIncome += amt;
       } else {
         totalExpense += amt;
@@ -661,24 +752,47 @@ export function FinanceProvider({ children }) {
 
     const netSavings = totalIncome - totalExpense;
     const savingsRate = totalIncome > 0 ? Math.round((netSavings / totalIncome) * 100) : 0;
-    const totalBalance = dynamicWallets.reduce((sum, w) => sum + w.balance, 0);
+    
+    // Total Saldo Seluruh Dompet (Likuiditas riil lifetime seluruh rekening aktif)
+    const totalBalance = (Array.isArray(dynamicWallets) ? dynamicWallets : []).reduce(
+      (sum, w) => sum + (Number(w?.balance) || 0),
+      0
+    );
 
+    // Hitung pengeluaran per kategori pada periode terpilih
     const expenseByCategoryMap = {};
-    transactions
-      .filter((tx) => tx.type === 'expense')
+    periodTransactions
+      .filter((tx) => tx?.type === 'expense')
       .forEach((tx) => {
-        const catKey = tx.categoryId || tx.category || 'others_exp';
-        expenseByCategoryMap[catKey] = (expenseByCategoryMap[catKey] || 0) + Number(tx.amount);
+        const catKey = tx?.categoryId || tx?.category || 'others_exp';
+        expenseByCategoryMap[catKey] = (expenseByCategoryMap[catKey] || 0) + Number(tx?.amount || 0);
       });
 
-    const activeExpenseCategories = categories.expense && categories.expense.length > 0
+    const activeExpenseCategories = categories?.expense && Array.isArray(categories.expense) && categories.expense.length > 0
       ? categories.expense
-      : CATEGORIES.expense;
+      : (CATEGORIES.expense || []);
+
+    let totalBudget = 0;
+    let totalBudgetSpent = 0;
+    let exceededBudgetCount = 0;
+    let exceededBudgetAmount = 0;
 
     const expenseCategoryData = activeExpenseCategories.map((cat) => {
       const spent = expenseByCategoryMap[cat.id] || 0;
-      const budgetObj = budgets.find((b) => b.categoryId === cat.id);
+      const budgetObj = budgetList.find((b) => b?.categoryId === cat.id);
       const limit = budgetObj ? Number(budgetObj.limit ?? budgetObj.amount ?? 0) : 0;
+      const isExceeded = limit > 0 && spent > limit;
+      const exceededBy = isExceeded ? spent - limit : 0;
+
+      if (limit > 0) {
+        totalBudget += limit;
+        totalBudgetSpent += spent;
+        if (isExceeded) {
+          exceededBudgetCount += 1;
+          exceededBudgetAmount += exceededBy;
+        }
+      }
+
       return {
         id: cat.id,
         name: cat.name,
@@ -688,44 +802,97 @@ export function FinanceProvider({ children }) {
         spent,
         budget: limit,
         limit,
-        percentage: totalExpense > 0 ? Math.round((spent / totalExpense) * 100) : 0
+        isExceeded,
+        exceededBy,
+        percentage: totalExpense > 0 ? Number(((spent / totalExpense) * 100).toFixed(1)) : 0
       };
     }).sort((a, b) => b.spent - a.spent);
 
+    const remainingBudget = Math.max(0, totalBudget - totalBudgetSpent);
+
+    // Tren Bulanan (6 bulan terakhir)
     const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
     const trendMap = {};
+    const nowRef = new Date();
 
-    transactions.forEach((tx) => {
+    for (let i = 5; i >= 0; i--) {
+      const d = new Date(nowRef.getFullYear(), nowRef.getMonth() - i, 1);
+      const key = `${monthNames[d.getMonth()]} ${d.getFullYear()}`;
+      trendMap[key] = {
+        month: key,
+        income: 0,
+        expense: 0,
+        net: 0,
+        timestamp: d.getTime()
+      };
+    }
+
+    txList.forEach((tx) => {
+      if (!tx?.date) return;
       const d = new Date(tx.date);
       if (isNaN(d.getTime())) return;
       const key = `${monthNames[d.getMonth()]} ${d.getFullYear()}`;
-      if (!trendMap[key]) {
-        trendMap[key] = { month: key, income: 0, expense: 0, timestamp: d.getTime() };
-      }
-      if (tx.type === 'income') {
-        trendMap[key].income += Number(tx.amount);
-      } else {
-        trendMap[key].expense += Number(tx.amount);
+      if (trendMap[key]) {
+        const amt = Number(tx?.amount || 0);
+        if (tx?.type === 'income') {
+          trendMap[key].income += amt;
+        } else {
+          trendMap[key].expense += amt;
+        }
+        trendMap[key].net = trendMap[key].income - trendMap[key].expense;
       }
     });
 
-    let trendChartData = Object.values(trendMap).sort((a, b) => a.timestamp - b.timestamp);
-    if (trendChartData.length === 0) {
-      trendChartData = [
-        { month: 'Okt 2026', income: totalIncome, expense: totalExpense },
-      ];
-    }
+    const trendChartData = Object.values(trendMap).sort((a, b) => a.timestamp - b.timestamp);
+
+    // Arus Kas Harian (Daily Cashflow Trend)
+    const dailyMap = {};
+    periodTransactions.forEach((tx) => {
+      if (!tx?.date) return;
+      const d = new Date(tx.date);
+      if (isNaN(d.getTime())) return;
+      const dateKey = d.toISOString().split('T')[0];
+
+      if (!dailyMap[dateKey]) {
+        dailyMap[dateKey] = {
+          date: dateKey,
+          label: `${d.getDate()} ${monthNames[d.getMonth()]}`,
+          income: 0,
+          expense: 0,
+          net: 0
+        };
+      }
+      const amt = Number(tx?.amount || 0);
+      if (tx?.type === 'income') {
+        dailyMap[dateKey].income += amt;
+      } else {
+        dailyMap[dateKey].expense += amt;
+      }
+      dailyMap[dateKey].net = dailyMap[dateKey].income - dailyMap[dateKey].expense;
+    });
+
+    const dailyCashflowData = Object.values(dailyMap).sort((a, b) => a.date.localeCompare(b.date));
 
     return {
+      period: periodFilter,
+      startDate: start.toISOString().split('T')[0],
+      endDate: end.toISOString().split('T')[0],
       totalBalance,
       totalIncome,
       totalExpense,
       netSavings,
       savingsRate,
+      totalBudget,
+      totalBudgetSpent,
+      remainingBudget,
+      exceededBudgetCount,
+      exceededBudgetAmount,
       expenseCategoryData,
-      trendChartData
+      trendChartData,
+      dailyCashflowData,
+      transactionCount: periodTransactions.length
     };
-  }, [transactions, budgets, dynamicWallets, categories]);
+  }, [transactions, budgets, dynamicWallets, categories, periodFilter, customStartDate, customEndDate, calculatePeriodRange]);
 
   const value = {
     // Auth State & Actions
@@ -751,9 +918,16 @@ export function FinanceProvider({ children }) {
     setIsAddModalOpen,
     periodFilter,
     setPeriodFilter,
+    customStartDate,
+    setCustomStartDate,
+    customEndDate,
+    setCustomEndDate,
     isLoading,
     isBackendConnected,
     apiError,
+    analyticsData,
+    analyticsLoading,
+    fetchAnalyticsSummary,
 
     // Refresh Handlers
     refreshTransactions: () => loadTransactionsFromBackend(),

@@ -1,22 +1,17 @@
 import bcrypt from 'bcryptjs';
-import jwt from 'jsonwebtoken';
 import prisma from '../config/prisma.js';
-
-/**
- * Helper untuk membuat Access Token JWT
- */
-const generateToken = (user) => {
-  const secret = process.env.JWT_SECRET;
-  if (!secret) {
-    throw new Error('Konfigurasi JWT_SECRET belum tersedia di server.');
-  }
-  const expiresIn = process.env.JWT_EXPIRES_IN || '7d';
-  return jwt.sign(
-    { id: user.id, email: user.email },
-    secret,
-    { expiresIn }
-  );
-};
+import {
+  generateAccessToken,
+  generateRawRefreshToken,
+  hashRefreshToken,
+  generateCsrfToken,
+  REFRESH_COOKIE_NAME,
+  CSRF_COOKIE_NAME,
+  getRefreshCookieOptions,
+  getCsrfCookieOptions,
+  getClearCookieOptions,
+  getClearCsrfCookieOptions
+} from '../utils/tokenUtils.js';
 
 /**
  * 1. POST /api/auth/register - Registrasi Pengguna Baru
@@ -88,13 +83,33 @@ export const register = async (req, res, next) => {
       }
     });
 
-    // Buat JWT Token
-    const token = generateToken(newUser);
+    // 1. Buat Access Token JWT (umur pendek 15m)
+    const token = generateAccessToken(newUser);
+
+    // 2. Buat Refresh Token (umur 7 hari) dan simpan hash di database
+    const rawRefreshToken = generateRawRefreshToken();
+    const tokenHash = hashRefreshToken(rawRefreshToken);
+    const expiresDays = parseInt(process.env.REFRESH_TOKEN_EXPIRES_DAYS, 10) || 7;
+    const expiresAt = new Date(Date.now() + expiresDays * 24 * 60 * 60 * 1000);
+
+    await prisma.refreshToken.create({
+      data: {
+        tokenHash,
+        userId: newUser.id,
+        expiresAt
+      }
+    });
+
+    // 3. Pasang Cookie HttpOnly untuk Refresh Token & Cookie CSRF Token
+    const csrfToken = generateCsrfToken();
+    res.cookie(REFRESH_COOKIE_NAME, rawRefreshToken, getRefreshCookieOptions());
+    res.cookie(CSRF_COOKIE_NAME, csrfToken, getCsrfCookieOptions());
 
     res.status(201).json({
       success: true,
       message: 'Registrasi akun berhasil!',
       token,
+      csrfToken,
       user: newUser
     });
   } catch (error) {
@@ -103,7 +118,7 @@ export const register = async (req, res, next) => {
 };
 
 /**
- * 2. POST /api/auth/login - Login Pengguna & Penerbitan Token
+ * 2. POST /api/auth/login - Login Pengguna & Penerbitan Sesi
  */
 export const login = async (req, res, next) => {
   try {
@@ -124,7 +139,6 @@ export const login = async (req, res, next) => {
       where: { email: normalizedEmail }
     });
 
-    // Gunakan pesan error umum agar tidak membocorkan keberadaan akun
     if (!user) {
       return res.status(401).json({
         success: false,
@@ -141,8 +155,27 @@ export const login = async (req, res, next) => {
       });
     }
 
-    // Buat JWT Token
-    const token = generateToken(user);
+    // 1. Buat Access Token JWT
+    const token = generateAccessToken(user);
+
+    // 2. Buat Refresh Token & Simpan Hash ke DB
+    const rawRefreshToken = generateRawRefreshToken();
+    const tokenHash = hashRefreshToken(rawRefreshToken);
+    const expiresDays = parseInt(process.env.REFRESH_TOKEN_EXPIRES_DAYS, 10) || 7;
+    const expiresAt = new Date(Date.now() + expiresDays * 24 * 60 * 60 * 1000);
+
+    await prisma.refreshToken.create({
+      data: {
+        tokenHash,
+        userId: user.id,
+        expiresAt
+      }
+    });
+
+    // 3. Pasang Cookie HttpOnly untuk Refresh Token & Cookie CSRF Token
+    const csrfToken = generateCsrfToken();
+    res.cookie(REFRESH_COOKIE_NAME, rawRefreshToken, getRefreshCookieOptions());
+    res.cookie(CSRF_COOKIE_NAME, csrfToken, getCsrfCookieOptions());
 
     // Siapkan object user aman (tanpa passwordHash)
     const userSafe = {
@@ -156,6 +189,7 @@ export const login = async (req, res, next) => {
       success: true,
       message: 'Login berhasil!',
       token,
+      csrfToken,
       user: userSafe
     });
   } catch (error) {
@@ -164,7 +198,170 @@ export const login = async (req, res, next) => {
 };
 
 /**
- * 3. GET /api/auth/me - Cek Sesi Pengguna Aktif
+ * 3. POST /api/auth/refresh - Rotasi Refresh Token & Pembaruan Access Token
+ */
+export const refresh = async (req, res, next) => {
+  try {
+    const rawRefreshToken = req.cookies?.[REFRESH_COOKIE_NAME];
+
+    if (!rawRefreshToken || typeof rawRefreshToken !== 'string') {
+      return res.status(401).json({
+        success: false,
+        message: 'Refresh token tidak ditemukan pada cookie.'
+      });
+    }
+
+    const incomingHash = hashRefreshToken(rawRefreshToken);
+
+    // Cari sesi token di database
+    const tokenRecord = await prisma.refreshToken.findUnique({
+      where: { tokenHash: incomingHash },
+      include: {
+        user: {
+          select: {
+            id: true,
+            name: true,
+            email: true,
+            createdAt: true
+          }
+        }
+      }
+    });
+
+    // Jika token tidak ditemukan di DB
+    if (!tokenRecord) {
+      res.clearCookie(REFRESH_COOKIE_NAME, getClearCookieOptions());
+      res.clearCookie(CSRF_COOKIE_NAME, getClearCsrfCookieOptions());
+      return res.status(401).json({
+        success: false,
+        message: 'Refresh token tidak valid atau tidak dikenali.'
+      });
+    }
+
+    // DETEKSI PENGGUNAAN ULANG TOKEN (REUSE DETECTION):
+    // Jika token sudah pernah dicabut atau sudah pernah digantikan token baru
+    if (tokenRecord.isRevoked || tokenRecord.replacedByTokenHash) {
+      // Cabut seluruh rantai sesi untuk akun ini sebagai mitigasi keamanan (RFC 6749 BCP)
+      await prisma.refreshToken.updateMany({
+        where: { userId: tokenRecord.userId },
+        data: {
+          isRevoked: true,
+          revokedAt: new Date()
+        }
+      });
+
+      res.clearCookie(REFRESH_COOKIE_NAME, getClearCookieOptions());
+      res.clearCookie(CSRF_COOKIE_NAME, getClearCsrfCookieOptions());
+
+      return res.status(401).json({
+        success: false,
+        message: 'Terdeteksi penggunaan ulang token yang tidak sah. Seluruh sesi akun telah dicabut demi keamanan. Silakan login kembali.'
+      });
+    }
+
+    // Periksa apakah token sudah kedaluwarsa
+    if (new Date() > new Date(tokenRecord.expiresAt)) {
+      await prisma.refreshToken.update({
+        where: { id: tokenRecord.id },
+        data: {
+          isRevoked: true,
+          revokedAt: new Date()
+        }
+      });
+
+      res.clearCookie(REFRESH_COOKIE_NAME, getClearCookieOptions());
+      res.clearCookie(CSRF_COOKIE_NAME, getClearCsrfCookieOptions());
+
+      return res.status(401).json({
+        success: false,
+        message: 'Sesi telah kedaluwarsa. Silakan login kembali.'
+      });
+    }
+
+    // TOKEN VALID: Lakukan rotasi token secara atomik
+    const newRawRefreshToken = generateRawRefreshToken();
+    const newHash = hashRefreshToken(newRawRefreshToken);
+    const expiresDays = parseInt(process.env.REFRESH_TOKEN_EXPIRES_DAYS, 10) || 7;
+    const newExpiresAt = new Date(Date.now() + expiresDays * 24 * 60 * 60 * 1000);
+
+    await prisma.$transaction([
+      prisma.refreshToken.update({
+        where: { id: tokenRecord.id },
+        data: {
+          isRevoked: true,
+          revokedAt: new Date(),
+          replacedByTokenHash: newHash
+        }
+      }),
+      prisma.refreshToken.create({
+        data: {
+          tokenHash: newHash,
+          userId: tokenRecord.userId,
+          expiresAt: newExpiresAt
+        }
+      })
+    ]);
+
+    // Terbitkan Access Token baru
+    const newAccessToken = generateAccessToken(tokenRecord.user);
+    const newCsrfToken = generateCsrfToken();
+
+    // Pasang cookie baru
+    res.cookie(REFRESH_COOKIE_NAME, newRawRefreshToken, getRefreshCookieOptions());
+    res.cookie(CSRF_COOKIE_NAME, newCsrfToken, getCsrfCookieOptions());
+
+    res.status(200).json({
+      success: true,
+      message: 'Sesi berhasil diperbarui.',
+      token: newAccessToken,
+      csrfToken: newCsrfToken,
+      user: tokenRecord.user
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * 4. POST /api/auth/logout - Pencabutan Sesi & Pembersihan Cookie
+ */
+export const logout = async (req, res, next) => {
+  try {
+    const rawRefreshToken = req.cookies?.[REFRESH_COOKIE_NAME];
+
+    if (rawRefreshToken && typeof rawRefreshToken === 'string') {
+      try {
+        const hash = hashRefreshToken(rawRefreshToken);
+        await prisma.refreshToken.updateMany({
+          where: {
+            tokenHash: hash,
+            isRevoked: false
+          },
+          data: {
+            isRevoked: true,
+            revokedAt: new Date()
+          }
+        });
+      } catch {
+        // Abaikan error database pada saat logout agar cookie tetap dibersihkan
+      }
+    }
+
+    // Bersihkan cookie di browser
+    res.clearCookie(REFRESH_COOKIE_NAME, getClearCookieOptions());
+    res.clearCookie(CSRF_COOKIE_NAME, getClearCsrfCookieOptions());
+
+    res.status(200).json({
+      success: true,
+      message: 'Logout berhasil. Sesi telah dicabut dan cookie dibersihkan.'
+    });
+  } catch (error) {
+    next(error);
+  }
+};
+
+/**
+ * 5. GET /api/auth/me - Cek Sesi Pengguna Aktif
  */
 export const getMe = async (req, res) => {
   // req.user sudah diverifikasi dan disematkan oleh middleware requireAuth

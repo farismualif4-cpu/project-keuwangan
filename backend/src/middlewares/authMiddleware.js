@@ -75,3 +75,7 @@ export const requireAuth = async (req, res, next) => {
     next(error);
   }
 };
+
+// Alias untuk fleksibilitas import
+export const authenticateToken = requireAuth;
+

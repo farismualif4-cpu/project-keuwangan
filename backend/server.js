@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import cookieParser from 'cookie-parser';
 import dotenv from 'dotenv';
 import healthRoutes from './src/routes/healthRoutes.js';
 import authRoutes from './src/routes/authRoutes.js';
@@ -7,6 +8,8 @@ import transactionRoutes from './src/routes/transactionRoutes.js';
 import walletRoutes from './src/routes/walletRoutes.js';
 import budgetRoutes from './src/routes/budgetRoutes.js';
 import categoryRoutes from './src/routes/categoryRoutes.js';
+import dataRoutes from './src/routes/dataRoutes.js';
+import analyticsRoutes from './src/routes/analyticsRoutes.js';
 import { seedSystemCategories } from './src/config/seedCategories.js';
 import { errorHandler, notFoundHandler } from './src/middlewares/errorHandler.js';
 import prisma from './src/config/prisma.js';
@@ -26,23 +29,34 @@ const PORT = process.env.PORT || 3000;
 const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:5173';
 
 // 1. Konfigurasi Middleware CORS
-const allowedOrigins = [CLIENT_URL, 'http://localhost:5173', 'http://127.0.0.1:5173'];
+const allowedOrigins = [
+  CLIENT_URL,
+  'http://localhost:5173',
+  'http://127.0.0.1:5173',
+  'http://localhost:5174',
+  'http://127.0.0.1:5174',
+  'http://localhost:5175',
+  'http://127.0.0.1:5175'
+];
 app.use(cors({
   origin: (origin, callback) => {
-    // Izinkan request tanpa origin (seperti Postman, curl, skrip testing)
-    if (!origin || allowedOrigins.includes(origin)) {
+    // Izinkan request tanpa origin (seperti Postman, curl, skrip testing) atau port lokal development
+    if (!origin || allowedOrigins.includes(origin) || /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
       return callback(null, true);
     }
-    return callback(new Error(`CORS blocked: Origin ${origin} not allowed`));
+    const err = new Error(`CORS blocked: Origin ${origin} not allowed`);
+    err.statusCode = 403;
+    return callback(err);
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'X-CSRF-Token']
 }));
 
-// 2. Parser JSON Body
-app.use(express.json({ limit: '1mb' }));
-app.use(express.urlencoded({ extended: true }));
+// 2. Parser JSON Body & Cookies
+app.use(express.json({ limit: '5mb' }));
+app.use(express.urlencoded({ extended: true, limit: '5mb' }));
+app.use(cookieParser());
 
 // 3. Logger Sederhana untuk Request Masuk (Development)
 if (process.env.NODE_ENV !== 'test') {
@@ -63,6 +77,8 @@ app.use('/api/transactions', transactionRoutes);
 app.use('/api/wallets', walletRoutes);
 app.use('/api/budgets', budgetRoutes);
 app.use('/api/categories', categoryRoutes);
+app.use('/api/data', dataRoutes);
+app.use('/api/analytics', analyticsRoutes);
 
 // Root greeting endpoint
 app.get('/', (req, res) => {
@@ -72,8 +88,16 @@ app.get('/', (req, res) => {
     authEndpoints: {
       register: 'POST /api/auth/register',
       login: 'POST /api/auth/login',
+      refresh: 'POST /api/auth/refresh (HttpOnly Cookie)',
+      logout: 'POST /api/auth/logout (HttpOnly Cookie)',
       me: 'GET /api/auth/me'
     },
+    dataEndpoints: {
+      exportCsv: 'GET /api/data/export/csv',
+      exportJson: 'GET /api/data/export/json',
+      importJson: 'POST /api/data/import/json'
+    },
+    analyticsEndpoint: '/api/analytics/summary (Protected)',
     transactionsEndpoint: '/api/transactions (memerlukan Bearer Token)'
   });
 });
@@ -94,6 +118,8 @@ const server = app.listen(PORT, async () => {
   console.log(`🏷️ Kategori API : http://localhost:${PORT}/api/categories (Protected)`);
   console.log(`💼 Dompet API   : http://localhost:${PORT}/api/wallets (Protected)`);
   console.log(`📊 Anggaran API : http://localhost:${PORT}/api/budgets (Protected)`);
+  console.log(`📈 Analitik API : http://localhost:${PORT}/api/analytics (Protected)`);
+  console.log(`💾 Data API     : http://localhost:${PORT}/api/data (Protected)`);
   console.log(`===============================================`);
   try {
     await seedSystemCategories();
