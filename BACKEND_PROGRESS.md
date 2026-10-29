@@ -289,3 +289,33 @@ dist/assets/index-BgG3gR7l.js   732.51 kB │ gzip: 210.59 kB
    - Agregasi saat ini diproses secara instan di level SQLite / Node.js runtime. Jika satu akun pengguna memiliki lebih dari 100.000 transaksi mutasi, disarankan menambahkan index komposit database `@@index([userId, date])` dan caching level Redis untuk kalkulasi bulanan.
 2. **Penyesuaian Jam Transaksi pada Zona Waktu Pengguna (Timezone Offset)**:
    - Format tanggal saat ini dipatok berdasarkan hari kalender lokal pengguna (`YYYY-MM-DD`). Transaksi yang dicatat di batas pergantian tengah malam (misal pukul 23:59 WIB) menggunakan filter UTC+0 pada server mungkin memiliki pergeseran beberapa jam jika server di-deploy di cloud dengan zona waktu UTC murni. Disarankan menyertakan header `X-Timezone` di masa depan jika dideploy ke multi-region.
+
+---
+
+# FinTrack — Backend Progress Report: Tahap 8 (Final Audit, Production Readiness & Deployment)
+
+*Tanggal Pelaksanaan*: 20 Oktober 2026  
+*Status Pengerjaan*: **Selesai Penuh & Siap Deploy Produksi (Production Ready)**  
+
+### Ringkasan Hasil Pengujian & Verifikasi Aktual:
+- **Rangkaian Test Suite Otomatis (Tahap 1–7)**: **268 dari 268 assertion LULUS (100% PASS, 0 Gagal)**
+  - `test-api.js`: 20/20 PASS (Health check & CRUD transaksi dasar)
+  - `test-auth.js`: 27/27 PASS (Bcrypt hash, register, login, isolasi data multi-tenant)
+  - `test-wallets-budgets.js`: 32/32 PASS (CRUD dompet, limit anggaran, relasi transaksi)
+  - `test-tahap4.js`: 45/45 PASS (Kategori sistem/kustom, filter multi-kriteria, paginasi DB)
+  - `test-tahap5.js`: 36/36 PASS (HttpOnly cookies, rotasi token RFC 6749, mitigasi CSRF)
+  - `test-tahap6.js`: 53/53 PASS (Ekspor CSV anti-CWE-1236, backup/import JSON atomik)
+  - `test-tahap7.js`: 55/55 PASS (Dashboard KPI, analitik harian/bulanan, multi-tenant)
+- **Kompilasi Build Frontend (`npm.cmd run build`)**: **Berhasil (built in 1.00s)**
+  - Optimasi `manualChunks` memisahkan vendor React, Recharts, dan Lucide Icons tanpa warning ukuran chunk.
+- **Database Safety Backup**: Dibuat di `backend/prisma/dev.db.backup_tahap8_preaudit` (160 KB).
+- **Pencegahan Kebocoran Kredensial**:
+  - Root, frontend, dan backend `.gitignore` diperketat untuk mengabaikan `.env`, `.env.*`, `*.db*`, `*.backup*`.
+  - Disediakan template `backend/.env.example` dan `fintrack/.env.example` tanpa nilai secret asli.
+- **Hardening Keamanan Produksi**:
+  - `CLIENT_URL` kini mendukung multi-origin dengan parsing koma (misal domain staging & production).
+  - Dukungan `COOKIE_SAME_SITE` ('none'/'lax'/'strict') dan `COOKIE_SECURE` ('true'/'false') untuk hosting lintas-domain (Vercel + Render).
+  - Skrip `npm test` dan `npm run prisma:deploy` ditambahkan di `backend/package.json`.
+- **Dokumentasi Lengkap**:
+  - Diterbitkan panduan resmi [`DEPLOYMENT.md`](file:///d:/month-4/project-keuwangan/DEPLOYMENT.md) mencakup arsitektur, env vars, migrasi Prisma, persistensi disk SQLite, rekomendasi cloud hosting, panduan domain/CORS/HTTPS, backup & restore, dan checklist verifikasi produksi.
+

@@ -316,8 +316,8 @@ body {
 
 .main-header {
   background: rgba(255, 255, 255, 0.85);
-  backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
   border-bottom: 1px solid var(--border-light);
   padding: 18px 32px;
   display: flex;

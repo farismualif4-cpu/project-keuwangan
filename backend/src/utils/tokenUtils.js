@@ -51,15 +51,34 @@ export const generateCsrfToken = () => {
 };
 
 /**
+ * Helper untuk menentukan atribut sameSite dan secure cookie
+ */
+const resolveCookieSecurity = () => {
+  const isProd = process.env.NODE_ENV === 'production';
+  const configuredSameSite = process.env.COOKIE_SAME_SITE?.toLowerCase();
+  const sameSite = ['strict', 'lax', 'none'].includes(configuredSameSite)
+    ? configuredSameSite
+    : (isProd ? 'strict' : 'lax');
+
+  // Jika sameSite === 'none', browser mewajibkan secure: true
+  const configuredSecure = process.env.COOKIE_SECURE;
+  const secure = configuredSecure !== undefined
+    ? configuredSecure === 'true'
+    : (isProd || sameSite === 'none');
+
+  return { sameSite, secure };
+};
+
+/**
  * Opsi konfigurasi Cookie HttpOnly untuk Refresh Token
  */
 export const getRefreshCookieOptions = () => {
-  const isProd = process.env.NODE_ENV === 'production';
+  const { sameSite, secure } = resolveCookieSecurity();
   const expiresDays = parseInt(process.env.REFRESH_TOKEN_EXPIRES_DAYS, 10) || 7;
   return {
     httpOnly: true,
-    secure: isProd,
-    sameSite: isProd ? 'strict' : 'lax',
+    secure,
+    sameSite,
     path: '/api/auth',
     maxAge: expiresDays * 24 * 60 * 60 * 1000 // dalam ms
   };
@@ -69,12 +88,12 @@ export const getRefreshCookieOptions = () => {
  * Opsi konfigurasi Cookie untuk CSRF Token (dapat dibaca klien JS)
  */
 export const getCsrfCookieOptions = () => {
-  const isProd = process.env.NODE_ENV === 'production';
+  const { sameSite, secure } = resolveCookieSecurity();
   const expiresDays = parseInt(process.env.REFRESH_TOKEN_EXPIRES_DAYS, 10) || 7;
   return {
     httpOnly: false,
-    secure: isProd,
-    sameSite: isProd ? 'strict' : 'lax',
+    secure,
+    sameSite,
     path: '/',
     maxAge: expiresDays * 24 * 60 * 60 * 1000
   };
@@ -84,21 +103,21 @@ export const getCsrfCookieOptions = () => {
  * Opsi untuk membersihkan cookie saat logout atau pencabutan sesi
  */
 export const getClearCookieOptions = () => {
-  const isProd = process.env.NODE_ENV === 'production';
+  const { sameSite, secure } = resolveCookieSecurity();
   return {
     httpOnly: true,
-    secure: isProd,
-    sameSite: isProd ? 'strict' : 'lax',
+    secure,
+    sameSite,
     path: '/api/auth'
   };
 };
 
 export const getClearCsrfCookieOptions = () => {
-  const isProd = process.env.NODE_ENV === 'production';
+  const { sameSite, secure } = resolveCookieSecurity();
   return {
     httpOnly: false,
-    secure: isProd,
-    sameSite: isProd ? 'strict' : 'lax',
+    secure,
+    sameSite,
     path: '/'
   };
 };

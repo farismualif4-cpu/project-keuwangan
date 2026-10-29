@@ -1,4 +1,10 @@
 node_modules/
 .env
+.env.*
+!.env.example
 *.db
-*.db-journal
+*.db-*
+*.db.backup*
+dev.db*
+logs/
+*.log

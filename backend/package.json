@@ -8,7 +8,9 @@
     "start": "node server.js",
     "dev": "nodemon server.js",
     "prisma:generate": "prisma generate",
-    "prisma:migrate": "prisma migrate dev"
+    "prisma:migrate": "prisma migrate dev",
+    "prisma:deploy": "prisma migrate deploy",
+    "test": "node test-api.js && node test-auth.js && node test-wallets-budgets.js && node test-tahap4.js && node test-tahap5.js && node test-tahap6.js && node test-tahap7.js"
   },
   "dependencies": {
     "@prisma/client": "^6.4.1",

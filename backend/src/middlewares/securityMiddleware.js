@@ -4,8 +4,13 @@ import { CSRF_COOKIE_NAME } from '../utils/tokenUtils.js';
  * Daftar origin yang diizinkan untuk verifikasi Origin / Referer
  */
 const getAllowedOrigins = () => {
+  const clientUrls = (process.env.CLIENT_URL || '')
+    .split(',')
+    .map((u) => u.trim())
+    .filter(Boolean);
+
   return [
-    process.env.CLIENT_URL,
+    ...clientUrls,
     'http://localhost:5173',
     'http://127.0.0.1:5173',
     'http://localhost:3000'

@@ -26,11 +26,14 @@ if (!process.env.JWT_SECRET || process.env.JWT_SECRET.trim().length === 0) {
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const CLIENT_URL = process.env.CLIENT_URL || 'http://localhost:5173';
+const rawClientUrls = (process.env.CLIENT_URL || 'http://localhost:5173')
+  .split(',')
+  .map((url) => url.trim())
+  .filter(Boolean);
 
 // 1. Konfigurasi Middleware CORS
 const allowedOrigins = [
-  CLIENT_URL,
+  ...rawClientUrls,
   'http://localhost:5173',
   'http://127.0.0.1:5173',
   'http://localhost:5174',
