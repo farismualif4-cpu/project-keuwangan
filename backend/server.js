@@ -43,8 +43,13 @@ const allowedOrigins = [
 ];
 app.use(cors({
   origin: (origin, callback) => {
-    // Izinkan request tanpa origin (seperti Postman, curl, skrip testing) atau port lokal development
-    if (!origin || allowedOrigins.includes(origin) || /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin)) {
+    // Izinkan request tanpa origin (seperti Postman, curl, skrip testing), port lokal development, atau domain vercel.app
+    if (
+      !origin ||
+      allowedOrigins.includes(origin) ||
+      /^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(origin) ||
+      /\.vercel\.app$/.test(origin)
+    ) {
       return callback(null, true);
     }
     const err = new Error(`CORS blocked: Origin ${origin} not allowed`);
@@ -111,38 +116,40 @@ app.use(notFoundHandler);
 // 6. Penanganan Error Global (500 / custom)
 app.use(errorHandler);
 
-// 7. Jalankan Server
-const server = app.listen(PORT, async () => {
-  console.log(`===============================================`);
-  console.log(`🚀 FinTrack Server berjalan di http://localhost:${PORT}`);
-  console.log(`🩺 Health check : http://localhost:${PORT}/api/health`);
-  console.log(`🔐 Auth API     : http://localhost:${PORT}/api/auth`);
-  console.log(`💳 Transaksi API: http://localhost:${PORT}/api/transactions (Protected)`);
-  console.log(`🏷️ Kategori API : http://localhost:${PORT}/api/categories (Protected)`);
-  console.log(`💼 Dompet API   : http://localhost:${PORT}/api/wallets (Protected)`);
-  console.log(`📊 Anggaran API : http://localhost:${PORT}/api/budgets (Protected)`);
-  console.log(`📈 Analitik API : http://localhost:${PORT}/api/analytics (Protected)`);
-  console.log(`💾 Data API     : http://localhost:${PORT}/api/data (Protected)`);
-  console.log(`===============================================`);
-  try {
-    await seedSystemCategories();
-  } catch (err) {
-    console.error('[SEED] Gagal seed kategori sistem otomatis:', err.message);
-  }
-});
-
-// Penanganan Graceful Shutdown
-const handleShutdown = async (signal) => {
-  console.log(`\n[SHUTDOWN] Menerima sinyal ${signal}, menutup server dengan aman...`);
-  server.close(async () => {
-    console.log('[SHUTDOWN] Server HTTP ditutup.');
-    await prisma.$disconnect();
-    console.log('[SHUTDOWN] Koneksi database diputus.');
-    process.exit(0);
+// 7. Jalankan Server (hanya di lingkungan non-serverless / lokal / container)
+if (process.env.VERCEL !== '1') {
+  const server = app.listen(PORT, async () => {
+    console.log(`===============================================`);
+    console.log(`🚀 FinTrack Server berjalan di http://localhost:${PORT}`);
+    console.log(`🩺 Health check : http://localhost:${PORT}/api/health`);
+    console.log(`🔐 Auth API     : http://localhost:${PORT}/api/auth`);
+    console.log(`💳 Transaksi API: http://localhost:${PORT}/api/transactions (Protected)`);
+    console.log(`🏷️ Kategori API : http://localhost:${PORT}/api/categories (Protected)`);
+    console.log(`💼 Dompet API   : http://localhost:${PORT}/api/wallets (Protected)`);
+    console.log(`📊 Anggaran API : http://localhost:${PORT}/api/budgets (Protected)`);
+    console.log(`📈 Analitik API : http://localhost:${PORT}/api/analytics (Protected)`);
+    console.log(`💾 Data API     : http://localhost:${PORT}/api/data (Protected)`);
+    console.log(`===============================================`);
+    try {
+      await seedSystemCategories();
+    } catch (err) {
+      console.error('[SEED] Gagal seed kategori sistem otomatis:', err.message);
+    }
   });
-};
 
-process.on('SIGINT', () => handleShutdown('SIGINT'));
-process.on('SIGTERM', () => handleShutdown('SIGTERM'));
+  // Penanganan Graceful Shutdown
+  const handleShutdown = async (signal) => {
+    console.log(`\n[SHUTDOWN] Menerima sinyal ${signal}, menutup server dengan aman...`);
+    server.close(async () => {
+      console.log('[SHUTDOWN] Server HTTP ditutup.');
+      await prisma.$disconnect();
+      console.log('[SHUTDOWN] Koneksi database diputus.');
+      process.exit(0);
+    });
+  };
+
+  process.on('SIGINT', () => handleShutdown('SIGINT'));
+  process.on('SIGTERM', () => handleShutdown('SIGTERM'));
+}
 
 export default app;
