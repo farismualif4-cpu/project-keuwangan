@@ -77,7 +77,7 @@ export default function Header({ onOpenMobile }) {
         <div 
           className={`status-pill ${isBackendConnected ? 'status-success' : 'status-warning'}`}
           style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontSize: '12px', padding: '5px 12px' }}
-          title={isBackendConnected ? 'Terhubung ke REST API Node.js & Database SQLite' : 'Mode Offline (Menggunakan Cache Lokal)'}
+          title={isBackendConnected ? 'Terhubung ke REST API Node.js & Database PostgreSQL' : 'Mode Offline (Menggunakan Cache Lokal)'}
         >
           <span 
             style={{ 

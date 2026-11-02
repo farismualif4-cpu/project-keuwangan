@@ -63,17 +63,8 @@ export function FinanceProvider({ children }) {
   const [authLoading, setAuthLoading] = useState(true);
   const [authError, setAuthError] = useState(null);
 
-  // Financial Domain States (Disinkronkan dengan Database Backend per User)
-  const [transactions, setTransactions] = useState(() => {
-    try {
-      const saved = localStorage.getItem(STORAGE_KEY_TX);
-      if (!saved) return [];
-      const parsed = JSON.parse(saved);
-      return Array.isArray(parsed) ? parsed : [];
-    } catch {
-      return [];
-    }
-  });
+  // Financial Domain States (Murni bersumber dari Database Backend per User, bukan localStorage)
+  const [transactions, setTransactions] = useState([]);
 
   const [wallets, setWallets] = useState([]);
   const [budgets, setBudgets] = useState([]);
