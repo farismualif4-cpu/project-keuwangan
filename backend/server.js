@@ -14,14 +14,17 @@ import { seedSystemCategories } from './src/config/seedCategories.js';
 import { errorHandler, notFoundHandler } from './src/middlewares/errorHandler.js';
 import prisma from './src/config/prisma.js';
 
-// Muat konfigurasi dari berkas .env
+// Muat konfigurasi dari berkas .env (diabaikan jika tidak tersedia, misal di Vercel Serverless)
 dotenv.config();
 
 // Validasi konfigurasi keamanan wajib sebelum menjalankan server
 if (!process.env.JWT_SECRET || process.env.JWT_SECRET.trim().length === 0) {
   console.error('[FATAL SECURITY ERROR] Konfigurasi JWT_SECRET wajib tersedia di environment variables.');
   console.error('[FATAL SECURITY ERROR] Server tidak dapat dijalankan tanpa kunci rahasia autentikasi yang aman.');
-  process.exit(1);
+  // Hanya lakukan process.exit di lingkungan lokal/container, bukan di Vercel Serverless
+  if (process.env.VERCEL !== '1') {
+    process.exit(1);
+  }
 }
 
 const app = express();
