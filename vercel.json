@@ -1,50 +1,41 @@
 {
-  "version": 2,
-  "name": "fintrack",
-  "builds": [
-    {
-      "src": "backend/server.js",
-      "use": "@vercel/node"
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "services": {
+    "frontend": {
+      "root": "fintrack",
+      "framework": "vite",
+      "bindings": [
+        {
+          "type": "service",
+          "service": "backend",
+          "format": "url",
+          "env": "BACKEND_URL"
+        }
+      ]
     },
-    {
-      "src": "fintrack/package.json",
-      "use": "@vercel/static-build",
-      "config": {
-        "distDir": "dist"
-      }
+    "backend": {
+      "root": "backend",
+      "entrypoint": "server.js"
     }
-  ],
-  "routes": [
+  },
+  "rewrites": [
     {
-      "src": "/api/(.*)",
-      "dest": "backend/server.js"
-    },
-    {
-      "src": "/api",
-      "dest": "backend/server.js"
-    },
-    {
-      "src": "/assets/(.*)",
-      "dest": "fintrack/assets/$1",
-      "headers": {
-        "Cache-Control": "public, max-age=31536000, immutable"
+      "source": "/api/(.*)",
+      "destination": {
+        "service": "backend"
       }
     },
     {
-      "src": "/favicon.svg",
-      "dest": "fintrack/favicon.svg"
+      "source": "/api",
+      "destination": {
+        "service": "backend"
+      }
     },
     {
-      "src": "/icons.svg",
-      "dest": "fintrack/icons.svg"
-    },
-    {
-      "handle": "filesystem"
-    },
-    {
-      "src": "/(.*)",
-      "dest": "fintrack/index.html"
+      "source": "/(.*)",
+      "destination": {
+        "service": "frontend"
+      }
     }
   ]
 }
-

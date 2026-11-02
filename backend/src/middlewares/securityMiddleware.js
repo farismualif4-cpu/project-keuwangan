@@ -30,9 +30,16 @@ export const verifyCsrfProtection = (req, res, next) => {
     const allowed = getAllowedOrigins();
 
     // 1. Verifikasi Origin jika tersedia
+    const isDomainAllowed = (checkUrl) => {
+      if (!checkUrl) return true;
+      if (allowed.includes(checkUrl)) return true;
+      if (/^https?:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(checkUrl)) return true;
+      if (/\.vercel\.app$/.test(checkUrl)) return true;
+      return false;
+    };
+
     if (origin) {
-      const isOriginAllowed = allowed.some((allowedOrigin) => origin === allowedOrigin);
-      if (!isOriginAllowed) {
+      if (!isDomainAllowed(origin)) {
         return res.status(403).json({
           success: false,
           message: 'Permintaan ditolak: Origin tidak sah (Pelanggaran CORS/CSRF).'
@@ -43,8 +50,7 @@ export const verifyCsrfProtection = (req, res, next) => {
       try {
         const refererUrl = new URL(referer);
         const refererOrigin = `${refererUrl.protocol}//${refererUrl.host}`;
-        const isRefererAllowed = allowed.some((allowedOrigin) => refererOrigin === allowedOrigin);
-        if (!isRefererAllowed) {
+        if (!isDomainAllowed(refererOrigin)) {
           return res.status(403).json({
             success: false,
             message: 'Permintaan ditolak: Referer tidak sah (Pelanggaran CORS/CSRF).'
